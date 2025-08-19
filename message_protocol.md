@@ -1,3 +1,4 @@
+// alternative: clients contact proxy, then connect directly to broker for commands
 Client <-> Proxy
 
 - create_queue(client_id) -> queue_id
@@ -5,17 +6,17 @@ Client <-> Proxy
 - read_queue(client_id, queue_id) -> val
 
 Broker <-> Broker (same group)
-- relay_append(client_id, queue_id, value)
-- apply_append(client_id, queue_id, value)
+- relay_append(queue_id, value)
+- apply_append(queue_id, value)
 - relay_read(client_id, queue_id)
 - apply_read(client_id, queue_id)
 - send_ping(broker_id)
 - ping()
 - send_vote()
-- who_leader()
-- rec_clients() -> clients
-- rec_queues() -> queues
-- rec_queue_data(queue_id) -> values
+- who_leader() -> broker_id
+- rec_clients() -> client_id[]
+- rec_queues() -> queue_id[]
+- rec_queue_data(queue_id) -> value[]
 
 Leader <-> Leader (different groups)
 - 
