@@ -9,21 +9,49 @@ class SqliteManager:
     def _create_tables(self):
         c = self.conn.cursor()
         c.execute('''
-            CREATE TABLE IF NOT EXISTS clients (
-                client_id TEXT PRIMARY KEY,
-                client_key TEXT
+            CREATE TABLE IF NOT EXISTS broker (
+                broker_id INTEGER PRIMARY KEY,
+                ip_address TEXT,
+                port INTEGER,
+                group INTEGER
             )
         ''')
         c.execute('''
-            CREATE TABLE IF NOT EXISTS queues (
-                queue_id TEXT PRIMARY KEY,
-                client_id TEXT
+            CREATE TABLE IF NOT EXISTS queue (
+                queue_id TEXT PRIMARY KEY
             )
         ''')
         c.execute('''
-            CREATE TABLE IF NOT EXISTS queue_values (
+            CREATE TABLE IF NOT EXISTS holds (
+                broker_id TEXT,
                 queue_id TEXT,
-                value TEXT
+                PRIMARY KEY (broker_id, queue_id),
+                FOREIGN KEY (broker_id) REFERENCES broker(broker_id),
+                FOREIGN KEY (queue_id) REFERENCES queue(queue_id)
+            )
+        ''')
+        c.execute('''
+            CREATE TABLE IF NOT EXISTS queue_value (
+                queue_id TEXT,
+                value INTEGER,
+                index INTEGER,
+                PRIMARY KEY (queue_id, value, index),
+                FOREIGN KEY (queue_id) REFERENCES queue(queue_id)
+            )
+        ''')
+        c.execute('''
+            CREATE TABLE IF NOT EXISTS client (
+                client_id TEXT PRIMARY KEY
+            )
+        ''')
+        c.execute('''
+            CREATE TABLE IF NOT EXISTS reads (
+                client_id TEXT,
+                queue_id TEXT,
+                index INTEGER,
+                PRIMARY KEY (client_id, queue_id),
+                FOREIGN KEY (client_id) REFERENCES client(client_id),
+                FOREIGN KEY (queue_id) REFERENCES queue(queue_id)
             )
         ''')
         self.conn.commit()
