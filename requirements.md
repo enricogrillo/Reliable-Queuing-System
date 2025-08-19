@@ -36,3 +36,10 @@ Clients
 Assumptions
 - You may assume no partitions happening, while nodes (brokers) may fail (crash failures).
 - Nodes running brokers holds a stable storage (the file system) that can be assumed to be reliable
+
+# From Cugola
+
+- any client can read/write any queue, even if created by some other client
+- brokers hold a pointer for each client, for each queue
+- no authentication is needed, nor any other security feature
+- focus on reliability; be as scalable as possible
