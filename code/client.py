@@ -1,37 +1,50 @@
-import socket
+from __future__ import annotations
+
+from typing import Optional, Tuple
 import json
+from urllib.parse import urlparse
+import http.client
+from http_utils import HttpJsonClient
 
-
-from commands import Command
+from proxy import Proxy
 
 
 class Client:
-    def __init__(self, client_id, host='localhost', port=5000):
-        self.id = client_id
-        self.sock = socket.create_connection((host, port))
-        self.buffer = ""
+    """Simple client that talks only to the Proxy."""
 
-    def send_command(self, command: Command, *params):
-        request = {
-            "command": command.value,
-            "params": params
-        }
-        self.sock.sendall((json.dumps(request) + "\n").encode())
-        return self._receive_response()
+    def __init__(self, client_id: str, proxy: Proxy, proxy_url: Optional[str] = None) -> None:
+        self.client_id = client_id
+        self._proxy = proxy
+        self._proxy_url = proxy_url
 
-    def _receive_response(self):
-        while True:
-            data = self.sock.recv(4096)
-            if not data:
-                raise Exception("Connection closed")
-            self.buffer += data.decode()
-            if "\n" in self.buffer:
-                line, self.buffer = self.buffer.split("\n", 1)
-                response = json.loads(line)
-                if response["status"] == "ok":
-                    return response["result"]
-                else:
-                    raise Exception(response["message"])
+    def create_queue(self) -> int:
+        if self._proxy_url:
+            res = self._post_json(self._proxy_url, "/create_queue", {})
+            return int(res["queue_id"])  # type: ignore[index]
+        return self._proxy.create_queue()
 
-    def close(self):
-        self.sock.close()
+    def append(self, queue_id: int, value: str) -> int:
+        if self._proxy_url:
+            res = self._post_json(
+                self._proxy_url, "/append", {"queue_id": queue_id, "value": value}
+            )
+            return int(res["message_id"])  # type: ignore[index]
+        return self._proxy.append(queue_id, value)
+
+    def read(self, queue_id: int, client_id: Optional[str] = None) -> Optional[Tuple[int, str]]:
+        client_id = client_id or self.client_id
+        if self._proxy_url:
+            res = self._post_json(
+                self._proxy_url, "/read", {"queue_id": queue_id, "client_id": client_id}
+            )
+            if res.get("message_id") is None:
+                return None
+            return int(res["message_id"]), str(res["value"])
+        return self._proxy.read(queue_id, client_id)
+
+    # Networking helper
+    def _post_json(self, base_url: str, path: str, payload: dict) -> dict:
+        client = HttpJsonClient(timeout=5)
+        return client.post_json(base_url, path, payload)
+
+
