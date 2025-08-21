@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import sys
 import time
+import threading
 
 # Add project root to path so 'code' package can be found
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
@@ -24,51 +25,48 @@ def main() -> None:
     reset_dir(base)
 
     # Use BrokerManager to spawn brokers
-    print("Starting brokers...")
+    print("Starting external brokers...")
     broker_manager = BrokerManager()
     
-    # Spawn broker group with replication
-    broker_names = broker_manager.spawn_group("default", [
-        ("127.0.0.1", 8001, True),   # leader
-        ("127.0.0.1", 8002, False),  # follower1
-        ("127.0.0.1", 8003, False),  # follower2
+    # Spawn brokers and set up replication
+    broker_names = broker_manager.spawn_group("external_group", [
+        ("127.0.0.1", 9501, True),   # leader
+        ("127.0.0.1", 9502, False),  # follower
     ])
     
+    time.sleep(0.1)  # Give brokers time to start
+
     # Create proxy with broker URLs
-    print("Setting up proxy...")
-    broker_urls = broker_manager.get_broker_urls("default")
+    print("\nCreating proxy that connects to external brokers...")
+    broker_urls = broker_manager.get_broker_urls("external_group")
     proxy = Proxy(broker_urls)
     proxy.start_http_server("127.0.0.1", 8000)
 
     time.sleep(0.2)
 
-    client = Client("alice", ("127.0.0.1", 8000))
+    # Test the system
+    print("\nTesting external broker communication...")
+    client = Client("test_user", ("127.0.0.1", 8000))
 
     # Create queue
     qid = client.create_queue()
     print(f"Created queue: {qid}")
 
     # Append messages
-    mid1 = client.append(qid, 100)
-    mid2 = client.append(qid, 200)
+    mid1 = client.append(qid, 500)
+    mid2 = client.append(qid, 600)
     print(f"Appended messages: {mid1}, {mid2}")
 
-    # Read (peek) next message
+    # Read messages
     next_msg = client.read(qid)
     print(f"Next message on queue {qid}: {next_msg}")
 
-    # Verify pointer advancement and isolation across clients
-    next_msg_same_client = client.read(qid)
-    print(f"Alice next message on queue {qid}: {next_msg_same_client}")
-    
-    bob = Client("bob", ("127.0.0.1", 8000))
-    next_msg_other_client = bob.read(qid)
-    print(f"Bob first message on queue {qid}: {next_msg_other_client}")
-
     # Cleanup
-    print("Cleaning up...")
+    print("\nCleaning up...")
     proxy.close()
     broker_manager.stop_all_brokers()
+    
+    print("Demo completed successfully!")
 
 
 if __name__ == "__main__":

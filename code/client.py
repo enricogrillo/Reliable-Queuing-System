@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from typing import Optional, Tuple
-from .http_utils import HttpJsonClient
+from .http_client import HttpJsonClient
 
 
 class Client:
