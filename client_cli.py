@@ -8,6 +8,16 @@ import sys
 import traceback
 from typing import Optional, List
 
+# Enable command history and line editing
+try:
+    import readline
+    # Set up command history
+    readline.parse_and_bind("tab: complete")
+    readline.parse_and_bind("set editing-mode emacs")
+except ImportError:
+    # readline not available on some platforms (like Windows)
+    readline = None
+
 # Import from code directory
 sys.path.append('code')
 from client import Client
@@ -20,52 +30,96 @@ class DistributedQueueCLI:
         self.cluster_id = None
         self.cached_queue_id = None
         self.client_id = client_id
+        self.history_file = ".queue_cli_history"
+        
+        # Load command history if readline is available
+        self._load_history()
+        
+    def _load_history(self):
+        """Load command history from file."""
+        if readline is None:
+            return
+            
+        try:
+            readline.read_history_file(self.history_file)
+        except FileNotFoundError:
+            # No history file yet, that's fine
+            pass
+        except Exception as e:
+            # Don't fail startup due to history issues
+            pass
+    
+    def _save_history(self):
+        """Save command history to file."""
+        if readline is None:
+            return
+            
+        try:
+            # Limit history to last 500 commands
+            readline.set_history_length(500)
+            readline.write_history_file(self.history_file)
+        except Exception as e:
+            # Don't fail due to history saving issues
+            pass
         
     def start(self):
         """Start the CLI interface"""
         print("Distributed Queue CLI v1.0")
         print("Type 'h' or 'help' for available commands.")
+        print("Use Ctrl+C to exit, or 'x' to quit.")
         print()
         
-        while True:
-            try:
-                command = input("> ").strip()
-                if not command:
-                    continue
+        try:
+            while True:
+                try:
+                    command = input("> ").strip()
+                    if not command:
+                        continue
+                        
+                    parts = command.split()
+                    cmd = parts[0].lower()
+                    args = parts[1:] if len(parts) > 1 else []
                     
-                parts = command.split()
-                cmd = parts[0].lower()
-                args = parts[1:] if len(parts) > 1 else []
-                
-                if cmd in ['x', 'quit', 'exit']:
-                    self._cmd_exit()
+                    if cmd in ['x', 'quit', 'exit']:
+                        self._cmd_exit()
+                        break
+                    elif cmd in ['h', 'help']:
+                        self._cmd_help()
+                    elif cmd == 'c':
+                        self._cmd_connect()
+                    elif cmd == 'b':
+                        self._cmd_add_broker(args)
+                    elif cmd == 't':
+                        self._cmd_topology()
+                    elif cmd == 'q':
+                        self._cmd_create_queue()
+                    elif cmd == 's':
+                        self._cmd_send(args)
+                    elif cmd == 'r':
+                        self._cmd_read(args)
+                    else:
+                        print(f"Unknown command: {cmd}. Type 'h' for help.")
+                        
+                except EOFError:
+                    # Handle Ctrl+D
+                    print("\nGoodbye!")
                     break
-                elif cmd in ['h', 'help']:
-                    self._cmd_help()
-                elif cmd == 'c':
-                    self._cmd_connect()
-                elif cmd == 'b':
-                    self._cmd_add_broker(args)
-                elif cmd == 't':
-                    self._cmd_topology()
-                elif cmd == 'q':
-                    self._cmd_create_queue()
-                elif cmd == 's':
-                    self._cmd_send(args)
-                elif cmd == 'r':
-                    self._cmd_read(args)
-                else:
-                    print(f"Unknown command: {cmd}. Type 'h' for help.")
-                    
-            except KeyboardInterrupt:
-                print("\nUse 'x' to exit.")
-            except EOFError:
-                print("\nGoodbye!")
-                break
-            except Exception as e:
-                print(f"Error: {e}")
-                if "--debug" in sys.argv:
-                    traceback.print_exc()
+                except Exception as e:
+                    print(f"Error: {e}")
+                    if "--debug" in sys.argv:
+                        traceback.print_exc()
+                        
+        except KeyboardInterrupt:
+            # Handle Ctrl+C
+            print("\n\nExiting...")
+            self._cmd_exit()
+        except Exception as e:
+            print(f"Fatal error: {e}")
+            if "--debug" in sys.argv:
+                traceback.print_exc()
+        finally:
+            # Save command history on exit
+            self._save_history()
     
     def _cmd_connect(self):
         """Connect to the broker cluster"""
@@ -257,6 +311,12 @@ class DistributedQueueCLI:
         print("  r              - Read from cached queue_id")
         print("  h, help        - Show this help")
         print("  x, quit, exit  - Exit the CLI")
+        print()
+        print("Navigation:")
+        print("  ↑ / ↓          - Browse command history")
+        print("  Ctrl+C         - Exit the CLI")
+        print("  Ctrl+D         - Exit the CLI (EOF)")
+        print("  Tab            - Command completion (if supported)")
     
     def _cmd_exit(self):
         """Exit the CLI"""
@@ -266,6 +326,9 @@ class DistributedQueueCLI:
                 pass
             except:
                 pass
+        
+        # Save history before exiting
+        self._save_history()
         print("Goodbye!")
 
 
