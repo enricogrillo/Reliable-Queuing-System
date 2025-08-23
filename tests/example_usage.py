@@ -29,6 +29,27 @@ def start_broker(broker_id: str, port: int, seed_brokers: list = None):
     broker.start()
     return broker
 
+def three_broker_cluster():
+    """Example with a 3-broker cluster (1 leader, 2 replicas)."""
+    print("=== Starting 3-Broker Cluster Example ===")
+    
+    # Start first broker (will become initial leader)
+    print("Starting broker-1 (initial leader)...")
+    broker1 = start_broker("broker-1", 9011)
+    time.sleep(1)
+    
+    # Start second broker (will join as replica)
+    print("Starting broker-2 (replica)...")
+    broker2 = start_broker("broker-2", 9012, ["localhost:9011"])
+    time.sleep(1)
+    
+    # Start third broker (will join as replica)
+    print("Starting broker-3 (replica)...")
+    broker3 = start_broker("broker-3", 9013, ["localhost:9011"])
+    time.sleep(1)
+
+    while True:
+        pass
 
 def example_three_broker_cluster():
     """Example with a 3-broker cluster (1 leader, 2 replicas)."""
@@ -200,13 +221,13 @@ if __name__ == "__main__":
     print("=" * 50)
     
     # Run the three-broker example
-    # example_three_broker_cluster()
+    three_broker_cluster()
     
     # Wait between examples
     time.sleep(2)
     
     # Run leader failover example
-    example_leader_failover()
+    #example_leader_failover()
     
     # Uncomment to run client-only example
     # example_client_only()
