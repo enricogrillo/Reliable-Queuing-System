@@ -77,13 +77,14 @@ class DistributedQueueCLI:
             # Extract cluster_id from first broker (assume all brokers in same cluster)
             # For simplicity, we'll use a default cluster_id if not specified
             if not self.cluster_id:
-                self.cluster_id = "G-DEFLT"  # Default cluster
+                self.cluster_id = "G-START"  # Default cluster
                 
             self.client = Client(
                 cluster_id=self.cluster_id,
-                initial_brokers=self.brokers,
+                seed_brokers=self.brokers,
                 client_id=self.client_id
             )
+            self.client.connect_to_cluster()
             
             # Test connection by getting cluster info
             info = self.client.get_cluster_info()
@@ -228,7 +229,7 @@ class DistributedQueueCLI:
         try:
             response = self.client.read_message(queue_id)
             if response and response.get('status') == 'success':
-                message = response.get('message')
+                message = response.get('data')
                 if message is not None:
                     print(f"Message: {message}")
                 else:
