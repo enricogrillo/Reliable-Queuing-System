@@ -1,170 +1,222 @@
-from __future__ import annotations
-
-from typing import Optional, Tuple, List
-from .base_data_manager import BaseDataManager
-
-
-class SqliteManager(BaseDataManager):
-    """
-    Simple SQLite-backed queue storage.
-
-    Schema:
-      - queues(id INTEGER PRIMARY KEY)
-      - messages(id INTEGER PRIMARY KEY, queue_id INTEGER NOT NULL, value INTEGER NOT NULL,
-                 FOREIGN KEY(queue_id) REFERENCES queues(id))
-      - read_pointers(queue_id INTEGER NOT NULL, client_id TEXT NOT NULL,
-                      last_read_message_id INTEGER NOT NULL DEFAULT 0,
-                      PRIMARY KEY(queue_id, client_id),
-                      FOREIGN KEY(queue_id) REFERENCES queues(id) ON DELETE CASCADE)
-
-    Methods provide both auto-id inserts and explicit-id variants to support
-    deterministic replication across broker nodes.
-    """
+import sqlite3
+import threading
+import time
+import os
+from typing import List, Tuple, Optional, Dict, Any
 
 
-
-    def _ensure_schema(self) -> None:
-        with self._cursor() as cur:
-            cur.execute(
-                """
+class BrokerDataManager:
+    """Handles all persistent data operations using SQLite storage."""
+    
+    def __init__(self, db_path: str):
+        """Initialize the data manager with SQLite database."""
+        # Ensure data directory exists
+        data_dir = "data"
+        os.makedirs(data_dir, exist_ok=True)
+        
+        # Put database in data directory
+        db_filename = os.path.basename(db_path)
+        self.db_path = os.path.join(data_dir, db_filename)
+        
+        self.db_connection = None
+        self.transaction_lock = threading.Lock()
+        self._initialize_database()
+    
+    def _initialize_database(self):
+        """Create database connection and initialize schema."""
+        self.db_connection = sqlite3.connect(self.db_path, check_same_thread=False)
+        self.db_connection.execute("PRAGMA journal_mode=WAL")  # Better concurrency
+        self._create_tables()
+    
+    def _create_tables(self):
+        """Create the required database tables."""
+        with self.transaction_lock:
+            cursor = self.db_connection.cursor()
+            
+            # Queues table
+            cursor.execute("""
                 CREATE TABLE IF NOT EXISTS queues (
-                    id INTEGER PRIMARY KEY
-                );
-                """
+                    queue_id TEXT PRIMARY KEY
+                )
+            """)
+            
+            # Queue data table
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS queue_data (
+                    queue_id TEXT,
+                    sequence_num INTEGER,
+                    data INTEGER,
+                    PRIMARY KEY (queue_id, sequence_num)
+                )
+            """)
+            
+            # Client positions table
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS client_positions (
+                    client_id TEXT,
+                    queue_id TEXT,
+                    read_position INTEGER DEFAULT 0,
+                    PRIMARY KEY (client_id, queue_id)
+                )
+            """)
+            
+            self.db_connection.commit()
+    
+    # Queue Operations
+    def create_queue(self, queue_id: str) -> bool:
+        """Create new queue metadata."""
+        with self.transaction_lock:
+            try:
+                cursor = self.db_connection.cursor()
+                cursor.execute("INSERT INTO queues (queue_id) VALUES (?)", (queue_id,))
+                self.db_connection.commit()
+                return True
+            except sqlite3.IntegrityError:
+                # Queue already exists
+                return False
+    
+    def queue_exists(self, queue_id: str) -> bool:
+        """Check if queue exists."""
+        cursor = self.db_connection.cursor()
+        cursor.execute("SELECT 1 FROM queues WHERE queue_id = ?", (queue_id,))
+        return cursor.fetchone() is not None
+    
+    def get_all_queues(self) -> List[str]:
+        """Return list of all queues."""
+        cursor = self.db_connection.cursor()
+        cursor.execute("SELECT queue_id FROM queues")
+        return [row[0] for row in cursor.fetchall()]
+    
+    # Message Operations
+    def append_message(self, queue_id: str, data: int) -> int:
+        """Add message with next sequence number. Returns sequence number."""
+        with self.transaction_lock:
+            cursor = self.db_connection.cursor()
+            
+            # Get next sequence number
+            cursor.execute(
+                "SELECT COALESCE(MAX(sequence_num), 0) + 1 FROM queue_data WHERE queue_id = ?",
+                (queue_id,)
             )
-            cur.execute(
-                """
-                CREATE TABLE IF NOT EXISTS messages (
-                    id INTEGER PRIMARY KEY,
-                    queue_id INTEGER NOT NULL,
-                    value INTEGER NOT NULL,
-                    FOREIGN KEY(queue_id) REFERENCES queues(id) ON DELETE CASCADE
-                );
-                """
+            next_sequence = cursor.fetchone()[0]
+            
+            # Insert message
+            cursor.execute(
+                "INSERT INTO queue_data (queue_id, sequence_num, data) VALUES (?, ?, ?)",
+                (queue_id, next_sequence, data)
             )
-            cur.execute(
-                """
-                CREATE TABLE IF NOT EXISTS read_pointers (
-                    queue_id INTEGER NOT NULL,
-                    client_id TEXT NOT NULL,
-                    last_read_message_id INTEGER NOT NULL DEFAULT 0,
-                    PRIMARY KEY(queue_id, client_id),
-                    FOREIGN KEY(queue_id) REFERENCES queues(id) ON DELETE CASCADE
-                );
-                """
+            
+            self.db_connection.commit()
+            return next_sequence
+    
+    def get_next_message(self, queue_id: str, after_sequence: int) -> Optional[Tuple[int, int]]:
+        """Retrieve next message in FIFO order. Returns (sequence_num, data) or None."""
+        cursor = self.db_connection.cursor()
+        cursor.execute(
+            """SELECT sequence_num, data FROM queue_data 
+               WHERE queue_id = ? AND sequence_num > ? 
+               ORDER BY sequence_num LIMIT 1""",
+            (queue_id, after_sequence)
+        )
+        result = cursor.fetchone()
+        return result if result else None
+    
+    def get_message_count(self, queue_id: str) -> int:
+        """Return total messages in queue."""
+        cursor = self.db_connection.cursor()
+        cursor.execute("SELECT COUNT(*) FROM queue_data WHERE queue_id = ?", (queue_id,))
+        return cursor.fetchone()[0]
+    
+    # Client Position Operations
+    def get_client_position(self, client_id: str, queue_id: str) -> int:
+        """Get current read position for client."""
+        cursor = self.db_connection.cursor()
+        cursor.execute(
+            "SELECT read_position FROM client_positions WHERE client_id = ? AND queue_id = ?",
+            (client_id, queue_id)
+        )
+        result = cursor.fetchone()
+        return result[0] if result else 0
+    
+    def update_client_position(self, client_id: str, queue_id: str, position: int):
+        """Update read position for client."""
+        with self.transaction_lock:
+            cursor = self.db_connection.cursor()
+            cursor.execute(
+                """INSERT OR REPLACE INTO client_positions (client_id, queue_id, read_position)
+                   VALUES (?, ?, ?)""",
+                (client_id, queue_id, position)
             )
-            cur.execute(
-                """
-                CREATE INDEX IF NOT EXISTS idx_messages_queue_id_id
-                ON messages(queue_id, id);
-                """
+            self.db_connection.commit()
+    
+    def get_all_client_positions(self) -> List[Tuple[str, str, int]]:
+        """Return all client positions as (client_id, queue_id, position)."""
+        cursor = self.db_connection.cursor()
+        cursor.execute("SELECT client_id, queue_id, read_position FROM client_positions")
+        return cursor.fetchall()
+    
+    # Recovery Operations
+    def restore_broker_state(self) -> Dict[str, Any]:
+        """Load all data on broker startup."""
+        state = {
+            'queues': self.get_all_queues(),
+            'client_positions': dict(
+                ((client_id, queue_id), position) 
+                for client_id, queue_id, position in self.get_all_client_positions()
+            ),
+            'queue_stats': {}
+        }
+        
+        # Get statistics for each queue
+        for queue_id in state['queues']:
+            state['queue_stats'][queue_id] = {
+                'message_count': self.get_message_count(queue_id),
+                'latest_sequence': self.get_latest_sequence(queue_id)
+            }
+        
+        return state
+    
+    def get_latest_sequence(self, queue_id: str) -> int:
+        """Get highest sequence number for queue."""
+        cursor = self.db_connection.cursor()
+        cursor.execute(
+            "SELECT COALESCE(MAX(sequence_num), 0) FROM queue_data WHERE queue_id = ?",
+            (queue_id,)
+        )
+        return cursor.fetchone()[0]
+    
+    def cleanup_old_data(self, queue_id: str, before_sequence: int):
+        """Remove obsolete data (optional optimization)."""
+        with self.transaction_lock:
+            cursor = self.db_connection.cursor()
+            cursor.execute(
+                "DELETE FROM queue_data WHERE queue_id = ? AND sequence_num < ?",
+                (queue_id, before_sequence)
             )
-
-    # Domain-specific helper methods
-
-    def _require_queue_exists(self, queue_id: int) -> None:
-        row = self._query_one("SELECT 1 FROM queues WHERE id=?", (queue_id,))
-        if row is None:
-            raise ValueError(f"Queue {queue_id} does not exist")
-
-    # Queue operations
-    def create_queue(self) -> int:
-        """Create a queue with auto-assigned id; returns the id."""
-        return self._insert_and_return_id("INSERT INTO queues DEFAULT VALUES")
-
-    def create_queue_with_id(self, queue_id: int) -> None:
-        """Create a queue with a specified id (used during replication)."""
-        self._execute("INSERT INTO queues(id) VALUES (?)", (queue_id,))
-
-
-
-    def queue_exists(self, queue_id: int) -> bool:
-        return self._query_one("SELECT 1 FROM queues WHERE id=?", (queue_id,)) is not None
-
-    # Message operations
-    def append_message(self, queue_id: int, value: int) -> int:
-        # Validate queue exists to surface clear errors
-        self._require_queue_exists(queue_id)
-        return self._insert_and_return_id(
-            "INSERT INTO messages(queue_id, value) VALUES (?, ?)", (queue_id, int(value))
-        )
-
-    def append_message_with_id(self, message_id: int, queue_id: int, value: int) -> None:
-        self._require_queue_exists(queue_id)
-        self._execute(
-            "INSERT INTO messages(id, queue_id, value) VALUES (?, ?, ?)",
-            (message_id, queue_id, int(value)),
-        )
-
-    def fetch_next_message(self, queue_id: int) -> Optional[Tuple[int, int]]:
-        """Return (message_id, value) of the next message without removing it."""
-        row = self._query_one(
-            "SELECT id, value FROM messages WHERE queue_id=? ORDER BY id ASC LIMIT 1",
-            (queue_id,),
-        )
-        if row is None:
-            return None
-        message_id, value = int(row[0]), int(row[1])
-        return message_id, value
-
-
-
-    # Read pointer operations (per client per queue)
-    def get_last_read_message_id(self, queue_id: int, client_id: str) -> int:
-        row = self._query_one(
-            "SELECT last_read_message_id FROM read_pointers WHERE queue_id=? AND client_id=?",
-            (queue_id, client_id),
-        )
-        return int(row[0]) if row is not None else 0
-
-    def set_last_read_message_id(self, queue_id: int, client_id: str, message_id: int) -> None:
-        self._execute(
-            """
-            INSERT INTO read_pointers(queue_id, client_id, last_read_message_id)
-            VALUES (?, ?, ?)
-            ON CONFLICT(queue_id, client_id) DO UPDATE SET last_read_message_id=excluded.last_read_message_id
-            """,
-            (queue_id, client_id, message_id),
-        )
-
-    def fetch_next_after(self, queue_id: int, after_message_id: int) -> Optional[Tuple[int, int]]:
-        row = self._query_one(
-            "SELECT id, value FROM messages WHERE queue_id=? AND id>? ORDER BY id ASC LIMIT 1",
-            (queue_id, after_message_id),
-        )
-        if row is None:
-            return None
-        return int(row[0]), int(row[1])
-
-    # Data export methods for catch-up
-    def get_all_queue_ids(self) -> List[int]:
-        """Get all queue IDs for catch-up sync."""
-        with self._cursor() as cur:
-            cur.execute("SELECT id FROM queues ORDER BY id")
-            return [int(row[0]) for row in cur.fetchall()]
-
-    def get_all_messages(self) -> List[dict]:
-        """Get all messages for catch-up sync."""
-        with self._cursor() as cur:
-            cur.execute("SELECT id, queue_id, value FROM messages ORDER BY queue_id, id")
-            return [
-                {
-                    "message_id": int(row[0]),
-                    "queue_id": int(row[1]),
-                    "value": int(row[2])
-                }
-                for row in cur.fetchall()
-            ]
-
-    def get_all_pointers(self) -> List[dict]:
-        """Get all read pointers for catch-up sync."""
-        with self._cursor() as cur:
-            cur.execute("SELECT queue_id, client_id, last_read_message_id FROM read_pointers ORDER BY queue_id, client_id")
-            return [
-                {
-                    "queue_id": int(row[0]),
-                    "client_id": str(row[1]),
-                    "message_id": int(row[2])
-                }
-                for row in cur.fetchall()
-            ]
+            self.db_connection.commit()
+    
+    # Transaction Management
+    def begin_transaction(self):
+        """Begin a database transaction."""
+        self.transaction_lock.acquire()
+        self.db_connection.execute("BEGIN")
+    
+    def commit_transaction(self):
+        """Commit the current transaction."""
+        try:
+            self.db_connection.commit()
+        finally:
+            self.transaction_lock.release()
+    
+    def rollback_transaction(self):
+        """Rollback the current transaction."""
+        try:
+            self.db_connection.rollback()
+        finally:
+            self.transaction_lock.release()
+    
+    def close(self):
+        """Close database connection."""
+        if self.db_connection:
+            self.db_connection.close()
+            self.db_connection = None
