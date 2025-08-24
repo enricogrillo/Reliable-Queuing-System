@@ -244,7 +244,7 @@ class Broker:
             
         for broker_info in other_brokers:
             try:
-                print(f"[{self.broker_id}] pinging [{broker_info.broker_id}]")
+                print(f"Broker [{self.broker_id}] pinging broker [{broker_info.broker_id}]")
                 self._send_to_broker(broker_info, heartbeat_msg)
             except Exception as e:
                 print(f"Failed to send heartbeat to {broker_info.broker_id}: {e}")
