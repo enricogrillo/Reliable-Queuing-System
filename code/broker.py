@@ -8,6 +8,8 @@ import os
 from typing import Dict, List, Optional, Tuple, Any
 from enum import Enum
 
+from code.client import SocketUtils
+
 # Add current directory to path for imports
 sys.path.insert(0, os.path.dirname(__file__))
 from broker_data_manager import BrokerDataManager
@@ -134,8 +136,8 @@ class Broker:
                     "cluster_id": self.cluster_id
                 }
                 
-                self._send_message(sock, join_request)
-                response = self._receive_message(sock)
+                SocketUtils.send_message(sock, join_request)
+                response = SocketUtils.receive_message(sock)
                 
                 if response and response.get("status") == "success":
                     # Update cluster membership from response
@@ -529,12 +531,12 @@ class Broker:
         """Handle individual client connection."""
         try:
             while not self.shutdown_event.is_set():
-                message = self._receive_message(conn)
+                message = SocketUtils.receive_message(conn)
                 if not message:
                     break
                 
                 response = self._process_message(message)
-                self._send_message(conn, response)
+                SocketUtils.send_message(conn, response)
                 
         except Exception as e:
             print(f"Error handling client {addr}: {e}")
@@ -587,44 +589,14 @@ class Broker:
             sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             sock.connect((broker_info.host, broker_info.port))
             
-            self._send_message(sock, message)
-            response = self._receive_message(sock)
+            SocketUtils.send_message(sock, message)
+            response = SocketUtils.receive_message(sock)
             
             sock.close()
             return response
             
         except Exception as e:
             print(f"Failed to send message to {broker_info.broker_id}: {e}")
-            return None
-    
-    def _send_message(self, sock: socket.socket, message: Dict[str, Any]):
-        """Send JSON message over socket."""
-        data = json.dumps(message).encode('utf-8')
-        length = len(data)
-        sock.sendall(length.to_bytes(4, byteorder='big') + data)
-    
-    def _receive_message(self, sock: socket.socket) -> Optional[Dict[str, Any]]:
-        """Receive JSON message from socket."""
-        try:
-            # Read message length
-            length_data = sock.recv(4)
-            if len(length_data) != 4:
-                return None
-            
-            message_length = int.from_bytes(length_data, byteorder='big')
-            
-            # Read message data
-            data = b''
-            while len(data) < message_length:
-                chunk = sock.recv(message_length - len(data))
-                if not chunk:
-                    return None
-                data += chunk
-            
-            return json.loads(data.decode('utf-8'))
-            
-        except Exception as e:
-            print(f"Error receiving message: {e}")
             return None
     
     # Background Threads
