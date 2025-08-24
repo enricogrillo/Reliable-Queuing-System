@@ -20,7 +20,7 @@ except ImportError:
 
 # Import from code directory
 sys.path.append('code')
-from client import Client
+from code.client import Client
 
 
 class DistributedQueueCLI:

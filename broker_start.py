@@ -10,7 +10,7 @@ from threading import Thread
 
 # Add code directory to path for imports
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'code'))
-from broker import Broker
+from code.broker import Broker
 
 
 def start_broker_thread(broker_id: str, port: int, seed_brokers: list = None):
