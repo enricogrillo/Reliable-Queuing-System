@@ -244,7 +244,7 @@ class Broker:
             
         for broker_info in other_brokers:
             try:
-                print(f"[{self.broker_id}] to [{broker_info.broker_id}]")
+                print(f"[{self.broker_id}] pinging [{broker_info.broker_id}]")
                 self._send_to_broker(broker_info, heartbeat_msg)
             except Exception as e:
                 print(f"Failed to send heartbeat to {broker_info.broker_id}: {e}")
@@ -332,6 +332,7 @@ class Broker:
             }
             
             if self._replicate_to_replicas(replication_msg):
+                print(f"Created queue {queue_id}")
                 return {"status": "success", "queue_id": queue_id}
             else:
                 return {"status": "error", "message": "Replication failed"}
@@ -359,6 +360,7 @@ class Broker:
         }
         
         if self._replicate_to_replicas(replication_msg):
+            print(f"Append value {data} to queue {queue_name}")
             return {"status": "success", "sequence_num": sequence_num}
         else:
             return {"status": "error", "message": "Replication failed"}
@@ -392,6 +394,7 @@ class Broker:
             
             # Replicate position update to all replicas
             if self._replicate_to_replicas(position_update):
+                print(f"Client {client_id} read from queue {queue_name}")
                 return {
                     "status": "success",
                     "sequence_num": sequence_num,
