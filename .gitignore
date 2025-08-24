@@ -59,3 +59,5 @@ data/
 .DS_Store
 Thumbs.db
 
+# Cli history
+.queue_cli_history
