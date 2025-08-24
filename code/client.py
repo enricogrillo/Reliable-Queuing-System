@@ -127,26 +127,32 @@ class Client:
     """Client library that connects to the distributed queuing cluster and performs operations."""
     
     def __init__(self, seed_brokers: List[str], client_id: str = None):
-        """Initialize client with broker list. Cluster ID will be auto-discovered if not provided."""
+        """Initialize client with seed brokers list."""
         self.client_id = client_id or generate_client_id()
         self.retry_attempts = 3
         self.operation_timeout = 10.0
         
-        # Multi-cluster support
+        # Seed brokers and cluster discovery
+        self.seed_brokers = list(seed_brokers) if seed_brokers else []
         self.clusters = {}  # cluster_id -> {topology, leader_index, is_connected}
         self.cluster_creation_index = 0
         
         # Background refresh
         self.shutdown_event = threading.Event()
         self.refresh_thread = None
-        
-        # Setup initial cluster
-        initial_cluster_id = self._discover_cluster_id(seed_brokers) or "G-UNKNOWN"
-        self.add_cluster(initial_cluster_id, seed_brokers)
     
-    def _discover_cluster_id(self, seed_brokers: List[str]) -> str:
-        """Discover cluster ID by connecting to any available broker."""
-        for broker_addr in seed_brokers:
+    def add_seed_brokers(self, seed_brokers: List[str]):
+        """Add new seed brokers to the client."""
+        new_brokers = [broker for broker in seed_brokers if broker not in self.seed_brokers]
+        self.seed_brokers.extend(new_brokers)
+        print(f"[Client {self.client_id}] Added {len(new_brokers)} new seed brokers")
+    
+    def connect(self) -> bool:
+        """Connect to all discoverable clusters from seed brokers."""
+        print(f"[Client {self.client_id}] Discovering clusters from {len(self.seed_brokers)} seed brokers")
+        
+        discovered_clusters = 0
+        for broker_addr in self.seed_brokers:
             try:
                 host, port = broker_addr.split(':')
                 port = int(port)
@@ -158,6 +164,7 @@ class Client:
                 
                 request = {
                     "operation": "CLUSTER_QUERY",
+                    "client_id": self.client_id
                 }
                 
                 response = SocketUtils.send_request(sock, request, 5.0)
@@ -165,27 +172,47 @@ class Client:
                 
                 if response and response.get('cluster_id'):
                     cluster_id = response['cluster_id']
-                    print(f"[Client {self.client_id}] Discovered cluster ID: {cluster_id}")
-                    return cluster_id
+                    
+                    # Add cluster if not already known
+                    if cluster_id not in self.clusters:
+                        self._add_discovered_cluster(cluster_id, broker_addr, response)
+                        discovered_clusters += 1
+                        print(f"[Client {self.client_id}] Discovered new cluster: {cluster_id}")
+                    else:
+                        # Update existing cluster with this broker
+                        self._update_cluster_broker(cluster_id, broker_addr)
                     
             except Exception as e:
-                continue  # Try next broker
+                print(f"[Client {self.client_id}] Failed to connect to {broker_addr}: {e}")
+                continue
         
-        print(f"[Client {self.client_id}] Could not discover cluster ID from any broker")
-        return None
+        if discovered_clusters > 0:
+            print(f"[Client {self.client_id}] Successfully discovered {discovered_clusters} clusters")
+            self._start_background_refresh()
+            return True
+        else:
+            print(f"[Client {self.client_id}] No clusters discovered")
+            return False
     
-    def add_cluster(self, cluster_id: str, seed_brokers: List[str]) -> bool:
-        """Add a new cluster connection."""
-        if cluster_id in self.clusters:
-            print(f"[Client {self.client_id}] Cluster {cluster_id} already exists, updating brokers")
+    def _add_discovered_cluster(self, cluster_id: str, broker_addr: str, response: Dict[str, Any]):
+        """Add a newly discovered cluster."""
+        # Create topology from the broker that responded
+        topology = ClusterTopology([broker_addr], cluster_id)
+        topology._update_from_response(response)
         
         self.clusters[cluster_id] = {
-            'topology': ClusterTopology(seed_brokers, cluster_id),
+            'topology': topology,
             'leader_index': 0,
-            'is_connected': False,
-            'seed_brokers': seed_brokers
+            'is_connected': True,
+            'seed_brokers': [broker_addr]
         }
-        return True
+    
+    def _update_cluster_broker(self, cluster_id: str, broker_addr: str):
+        """Update existing cluster with additional broker."""
+        cluster = self.clusters.get(cluster_id)
+        if cluster and broker_addr not in cluster['seed_brokers']:
+            cluster['seed_brokers'].append(broker_addr)
+            cluster['topology'].seed_brokers.append(broker_addr)
     
 
     
@@ -198,76 +225,6 @@ class Client:
         cluster_id = clusters[self.cluster_creation_index % len(clusters)]
         self.cluster_creation_index += 1
         return cluster_id
-    
-    
-    # Connection Management
-    def connect_to_cluster(self) -> bool:
-        """Connect to cluster and discover topology."""
-        try:
-            # Get primary cluster ID
-            clusters = list(self.clusters.keys())
-            if not clusters:
-                return False
-            primary_cluster_id = clusters[0]
-            
-            print(f"[Client {self.client_id}] Connecting to cluster {primary_cluster_id}")
-            
-            # Handle unknown cluster ID case
-            if primary_cluster_id == "G-UNKNOWN":
-                cluster = self.clusters.get(primary_cluster_id, {})
-                seed_brokers = cluster.get('seed_brokers', [])
-                
-                # Try to discover the real cluster ID
-                real_cluster_id = self._discover_cluster_id(seed_brokers)
-                if real_cluster_id and real_cluster_id != "G-UNKNOWN":
-                    del self.clusters[primary_cluster_id]
-                    self.add_cluster(real_cluster_id, seed_brokers)
-                    primary_cluster_id = real_cluster_id
-                    print(f"[Client {self.client_id}] Updated cluster ID to {real_cluster_id}")
-            
-            # Connect to the cluster and discover topology
-            cluster = self.clusters.get(primary_cluster_id, {})
-            topology = cluster.get('topology')
-            if topology:
-                # Manually discover topology since we removed the method
-                for broker_addr in topology.seed_brokers:
-                    try:
-                        host, port = broker_addr.split(':')
-                        port = int(port)
-                        
-                        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                        sock.settimeout(5.0)
-                        sock.connect((host, port))
-                        
-                        request = {
-                            "operation": "CLUSTER_QUERY",
-                            "client_id": "discovery",
-                            "cluster_id": topology.cluster_id
-                        }
-                        
-                        response = SocketUtils.send_request(sock, request, 5.0)
-                        sock.close()
-                        
-                        if response and response.get('brokers'):
-                            topology._update_from_response(response)
-                            cluster['is_connected'] = True
-                            
-                            leaders_count = len(topology.get_leaders())
-                            replicas_count = len(topology.get_replicas())
-                            print(f"Connected to cluster with {leaders_count} leaders, {replicas_count} replicas")
-                            
-                            # Start background refresh
-                            self._start_background_refresh()
-                            return True
-                            
-                    except Exception:
-                        continue
-            
-            return False
-            
-        except Exception as e:
-            print(f"[Client {self.client_id}] Failed to connect: {e}")
-            return False
     
     def _start_background_refresh(self):
         """Start background topology refresh thread."""
@@ -420,7 +377,6 @@ class Client:
             all_info[cluster_id] = self.get_cluster_info(cluster_id)
         return all_info
     
-
     # Private Methods
     def _execute_request_on_cluster(self, request: Dict[str, Any], cluster_id: str, queue_id: str = None) -> Dict[str, Any]:
         """Execute operation on specific cluster with automatic failover."""
@@ -453,15 +409,6 @@ class Client:
         
         return {"status": "error", "message": f"All brokers unavailable in cluster {cluster_id}"}
     
-    def _execute_request(self, request: Dict[str, Any], queue_id: str = None) -> Dict[str, Any]:
-        """Execute operation with automatic failover (backward compatibility)."""
-        # Use first available cluster
-        clusters = list(self.clusters.keys())
-        primary_cluster_id = clusters[0] if clusters else None
-        if not primary_cluster_id:
-            return {"status": "error", "message": "No clusters available"}
-        return self._execute_request_on_cluster(request, primary_cluster_id, queue_id)
-    
     def _select_leader_for_cluster(self, cluster_id: str, queue_id: str = None) -> Optional[BrokerInfo]:
         """Choose leader broker from specific cluster."""
         cluster = self.clusters.get(cluster_id)
@@ -482,32 +429,8 @@ class Client:
         cluster['leader_index'] = leader_index + 1
         return leader
     
-    def _select_leader(self, queue_id: str = None) -> Optional[BrokerInfo]:
-        """Choose leader broker, preferring same cluster as queue if specified (backward compatibility)."""
-        # Use first available cluster
-        clusters = list(self.clusters.keys())
-        primary_cluster_id = clusters[0] if clusters else None
-        if not primary_cluster_id:
-            return None
-        return self._select_leader_for_cluster(primary_cluster_id, queue_id)
-    
     def _create_connection(self, broker: BrokerInfo) -> socket.socket:
         """Create connection to specific broker."""
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         sock.connect((broker.host, broker.port))
         return sock
-    
-    def refresh_topology(self) -> bool:
-        """Update broker list and roles."""
-        try:
-            old_version = self.topology.cluster_version
-            self.topology.discover_cluster()
-            
-            if self.topology.cluster_version > old_version:
-                print(f"[Client {self.client_id}] Topology updated to version {self.topology.cluster_version}")
-                return True
-            return False
-        except Exception as e:
-            print(f"[Client {self.client_id}] Failed to refresh topology: {e}")
-            return False
-

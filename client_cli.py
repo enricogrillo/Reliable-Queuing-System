@@ -128,19 +128,24 @@ class DistributedQueueCLI:
             return
             
         try:
-            # Let client auto-discover cluster ID from brokers
+            # Create client with seed brokers and connect to discover clusters
             self.client = Client(
                 seed_brokers=self.brokers,
                 client_id=self.client_id
             )
-            self.client.connect_to_cluster()
+            connected = self.client.connect()
+            if not connected:
+                print("Failed to connect to any cluster. Please check your broker addresses.")
+                self.client = None
+                return
             
             # Test connection by getting cluster info
             info = self.client.get_cluster_info()
             if info and 'brokers' in info:
                 leader_count = len([b for b in info['brokers'] if b.get('is_leader', False)])
                 total_brokers = len(info['brokers'])
-                print(f"Connected to cluster {self.cluster_id} ({total_brokers} brokers, {leader_count} leader{'s' if leader_count != 1 else ''})")
+                cluster_id = info.get('cluster_id', 'Unknown')
+                print(f"Connected to cluster {cluster_id} ({total_brokers} brokers, {leader_count} leader{'s' if leader_count != 1 else ''})")
             else:
                 print("Connected to cluster")
                 
@@ -165,7 +170,8 @@ class DistributedQueueCLI:
         # If we have a client, refresh topology
         if self.client:
             try:
-                self.client.refresh_topology()
+                # Refresh topology by getting cluster info
+                self.client.get_cluster_info()
                 print("Topology refreshed")
             except Exception as e:
                 print(f"Warning: Failed to refresh topology: {e}")
@@ -182,7 +188,8 @@ class DistributedQueueCLI:
                 print("No cluster information available")
                 return
                 
-            print(f"Cluster: {self.client.cluster_id if self.client else 'None'}")
+            cluster_id = info.get('cluster_id', 'Unknown') if info else 'None'
+            print(f"Cluster: {cluster_id}")
             for broker in info['brokers']:
                 role = "Leader" if broker.get('is_leader', False) else "Replica"
                 status = "✓" if broker.get('is_alive', True) else "✗"
@@ -215,7 +222,7 @@ class DistributedQueueCLI:
                 self.cached_queue_id = queue_id
                 print(f"Queue created: {queue_id}")
             else:
-                error = response.get('error', 'Unknown error') if response else 'No response'
+                error = response.get('message', 'Unknown error') if response else 'No response'
                 print(f"Failed to create queue: {error}")
                 
         except Exception as e:
