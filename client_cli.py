@@ -93,7 +93,7 @@ class DistributedQueueCLI:
                         self._cmd_topology()
                     elif cmd == 'q':
                         self._cmd_create_queue()
-                    elif cmd == 's':
+                    elif cmd == 'a':
                         self._cmd_send(args)
                     elif cmd == 'r':
                         self._cmd_read(args)
@@ -305,8 +305,8 @@ class DistributedQueueCLI:
         print("  b <host:port>  - Add new broker to establish new cluster connection")
         print("  t              - Show connection and cluster status topology")
         print("  q              - Create a new queue (auto-generated ID, cached)")
-        print("  s <queue_id> <message> - Send message to specific queue")
-        print("  s <message>    - Send message to cached queue_id")
+        print("  a <queue_id> <message> - Append message to specific queue")
+        print("  a <message>    - Append message to cached queue_id")
         print("  r <queue_id>   - Read from specific queue")
         print("  r              - Read from cached queue_id")
         print("  h, help        - Show this help")
