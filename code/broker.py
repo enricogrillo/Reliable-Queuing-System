@@ -242,7 +242,7 @@ class Broker:
             
         for broker_info in other_brokers:
             try:
-                print(f"{self.broker_id} to {broker_info.broker_id}")
+                print(f"[{self.broker_id}] to [{broker_info.broker_id}]")
                 self._send_to_broker(broker_info, heartbeat_msg)
             except Exception as e:
                 print(f"Failed to send heartbeat to {broker_info.broker_id}: {e}")
@@ -253,14 +253,14 @@ class Broker:
 
         current_time = time.time()
         failed_brokers = []
-        
+
         with self.cluster_lock:
-                for broker_id, broker_info in self.cluster_members.items():
-                    if ((self.role == BrokerRole.LEADER or broker_info.role == BrokerRole.LEADER) and 
-                        broker_id != self.broker_id and 
-                        current_time - broker_info.last_heartbeat > self.election_timeout):
-                        failed_brokers.append(broker_id)
-                        broker_info.status = BrokerStatus.FAILED
+            for broker_id, broker_info in self.cluster_members.items():
+                if ((self.role == BrokerRole.LEADER or broker_info.role == BrokerRole.LEADER) and 
+                    broker_id != self.broker_id and 
+                    current_time - broker_info.last_heartbeat > self.election_timeout):
+                    failed_brokers.append(broker_id)
+                    broker_info.status = BrokerStatus.FAILED
 
         if failed_brokers:
             print(f"[Broker {self.broker_id}] Detected failed brokers: {failed_brokers}")
