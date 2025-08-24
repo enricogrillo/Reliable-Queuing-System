@@ -20,7 +20,7 @@ except ImportError:
 
 # Import from code directory
 sys.path.append('code')
-from code.client import Client
+from client import Client
 
 
 class DistributedQueueCLI:
@@ -93,7 +93,7 @@ class DistributedQueueCLI:
                         self._cmd_topology()
                     elif cmd == 'q':
                         self._cmd_create_queue()
-                    elif cmd == 'a':
+                    elif cmd == 's':
                         self._cmd_send(args)
                     elif cmd == 'r':
                         self._cmd_read(args)
@@ -128,13 +128,8 @@ class DistributedQueueCLI:
             return
             
         try:
-            # Extract cluster_id from first broker (assume all brokers in same cluster)
-            # For simplicity, we'll use a default cluster_id if not specified
-            if not self.cluster_id:
-                self.cluster_id = "G-START"  # Default cluster
-                
+            # Let client auto-discover cluster ID from brokers
             self.client = Client(
-                cluster_id=self.cluster_id,
                 seed_brokers=self.brokers,
                 client_id=self.client_id
             )
@@ -187,7 +182,7 @@ class DistributedQueueCLI:
                 print("No cluster information available")
                 return
                 
-            print(f"Cluster: {self.cluster_id}")
+            print(f"Cluster: {self.client.cluster_id if self.client else 'None'}")
             for broker in info['brokers']:
                 role = "Leader" if broker.get('is_leader', False) else "Replica"
                 status = "✓" if broker.get('is_alive', True) else "✗"
@@ -305,8 +300,8 @@ class DistributedQueueCLI:
         print("  b <host:port>  - Add new broker to establish new cluster connection")
         print("  t              - Show connection and cluster status topology")
         print("  q              - Create a new queue (auto-generated ID, cached)")
-        print("  a <queue_id> <message> - Append message to specific queue")
-        print("  a <message>    - Append message to cached queue_id")
+        print("  s <queue_id> <message> - Send message to specific queue")
+        print("  s <message>    - Send message to cached queue_id")
         print("  r <queue_id>   - Read from specific queue")
         print("  r              - Read from cached queue_id")
         print("  h, help        - Show this help")
