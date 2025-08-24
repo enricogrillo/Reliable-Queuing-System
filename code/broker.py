@@ -554,6 +554,8 @@ class Broker:
         elif operation == "HEARTBEAT":
             return self._handle_heartbeat(message)
         
+        elif operation == "MEMBERSHIP_UPDATE":
+            return self._update_cluster_membership(message['cluster_info'])
         else:
             return {"status": "error", "message": f"Unknown operation: {operation}"}
     
