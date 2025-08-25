@@ -15,8 +15,8 @@ import json
 
 # Add code directory to path
 sys.path.insert(0, 'code')
-from id_generator import generate_broker_id, generate_cluster_id
-from broker import Broker
+from code.id_generator import generate_broker_id, generate_cluster_id
+from code.broker import Broker
 
 
 class IPManager:
@@ -241,8 +241,8 @@ class BrokerSpawner:
                     break
                 except KeyboardInterrupt:
                     # Ctrl+C
-                    print("\nUse 'x' to exit or Ctrl+D")
-                    continue
+                    print("\nGoodbye!")
+                    break
         finally:
             self.shutdown()
     
