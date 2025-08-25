@@ -499,6 +499,10 @@ class Broker:
         
         member = self.cluster_members[broker_id]
         
+        # Skip sending to failed brokers to reduce noise
+        if member.status == BrokerStatus.FAILED:
+            return False
+        
         try:
             # Create connection to broker
             sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -517,7 +521,9 @@ class Broker:
             return response and response.get("status") == "success"
         
         except Exception as e:
-            print(f"Failed to send to broker {broker_id}: {e}")
+            # Only print error if the broker is still marked as active
+            if member.status == BrokerStatus.ACTIVE:
+                print(f"Failed to send to broker {broker_id}: {e}")
             return False
     
     def _handle_replication(self, message: Dict) -> Dict:
@@ -903,7 +909,7 @@ class Broker:
                     )
                     
                     if has_leader:
-                        print(f"Leader already elected during delay, canceling election")
+                        # Silently cancel election if leader already exists
                         return
                     
                     # Simple check - proceed if we're a viable candidate
@@ -987,7 +993,10 @@ class Broker:
                 return "failed"
         
         except Exception as e:
-            print(f"Failed to get vote from broker {broker_id}: {e}")
+            # Only print election failures for active brokers 
+            member = self.cluster_members.get(broker_id)
+            if member and member.status == BrokerStatus.ACTIVE:
+                print(f"Failed to get vote from broker {broker_id}: {e}")
             return "failed"
     
     def _conduct_election(self):
@@ -1229,8 +1238,8 @@ class Broker:
                 )
                 
                 if has_leader:
-                    print(f"Leader elected during monitoring, election complete")
-                    return  # Election completed successfully
+                    # Election completed successfully - stop monitoring
+                    return
         
         # Final timeout check
         with self.state_lock:
