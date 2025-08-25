@@ -695,6 +695,9 @@ class Broker:
             
             # Get data snapshot for catch-up
             data_snapshot = self.data_manager.get_full_data_snapshot()
+
+            # propagate new member to other replicas
+            self._replicate_membership_update()
             
             return {
                 "status": "success",
@@ -758,12 +761,19 @@ class Broker:
             "cluster_version": self.cluster_version
         }
         
-        with self.state_lock:
-            other_members = [
-                broker_id for broker_id in self.cluster_members.keys()
-                if broker_id != self.broker_id
-            ]
-        
+        # leader sends heartbeats to everyone
+        if self.role == BrokerRole.LEADER:
+            with self.state_lock:
+                other_members = [info.broker_id for info in self.cluster_members.values() 
+                            if info.broker_id != self.broker_id]
+
+        # replicas send heartbeats to leader only
+        else:
+            with self.state_lock:
+                other_members = [info.broker_id for info in self.cluster_members.values() 
+                            if info.broker_id != self.broker_id and info.role == BrokerRole.LEADER]
+            
+
         for broker_id in other_members:
             self._send_to_broker(broker_id, heartbeat_message)
         
@@ -807,7 +817,8 @@ class Broker:
         
         with self.state_lock:
             for broker_id, member in self.cluster_members.items():
-                if (broker_id != self.broker_id and 
+                if ((self.role == BrokerRole.LEADER or member.role == BrokerRole.LEADER) and 
+                    broker_id != self.broker_id and 
                     current_time - member.last_heartbeat > 15.0):  # 15 second timeout
                     failed_brokers.append(broker_id)
         
@@ -884,6 +895,8 @@ class Broker:
         
         active_brokers = self._get_active_broker_ids()
         other_brokers = [bid for bid in active_brokers if bid != self.broker_id]
+
+        print(other_brokers)
         
         election_message = {
             "operation": "ELECTION_REQUEST",
@@ -898,6 +911,7 @@ class Broker:
         
         # Request votes from other brokers
         for broker_id in other_brokers:
+            print(f"{self.broker_id} sending vote request to {broker_id}")
             if self._send_to_broker(broker_id, election_message):
                 votes_received += 1
             else:
@@ -951,21 +965,27 @@ class Broker:
         election_timestamp = message.get("timestamp", 0)
         
         current_time = time.time()
-        
+
         # Validation checks
         if self.role != BrokerRole.REPLICA:
+            print("reject1")
             return {"status": "denied", "reason": "Not a replica"}
         
         if candidate_version <= self.cluster_version:
+            print("reject2")
             return {"status": "denied", "reason": "Stale version"}
         
         if current_time - election_timestamp > 20.0:
+            print("reject3")
             return {"status": "denied", "reason": "Election too old"}
         
         if current_time - self.last_election_time < 10.0:
+            print("reject4")
             return {"status": "denied", "reason": "Too soon since last vote"}
         
-        if candidate_id not in self.cluster_members:
+        if candidate_id not in self.cluster_members.keys():
+            print(self.cluster_members.keys())
+            print("reject5")
             return {"status": "denied", "reason": "Unknown candidate"}
         
         # Grant vote
@@ -1032,10 +1052,21 @@ class Broker:
     
     # ================== UTILITY METHODS ==================
     
-    def _handle_membership_update(self, message: Dict) -> Dict:
-        """Handle membership update from leader."""
-        # Implementation for handling membership updates
-        return {"status": "success"}
+    def _handle_membership_update(self, message: Dict[str, Any]):
+        """Update local cluster membership from cluster info."""
+        with self.state_lock:
+            self.cluster_version = message.get("cluster_version", 0)
+            self.cluster_members.clear()
+            
+            for broker_data in message.get("members", []):
+                broker_info = ClusterMember(
+                    broker_data["broker_id"],
+                    broker_data["host"], 
+                    broker_data["port"],
+                    BrokerRole(broker_data["role"]),
+                    BrokerStatus(broker_data["status"])
+                )
+                self.cluster_members[broker_info.broker_id] = broker_info
     
     def _handle_data_sync_request(self, message: Dict) -> Dict:
         """Handle data sync request from joining broker."""
