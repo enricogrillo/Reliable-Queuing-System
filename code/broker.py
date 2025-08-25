@@ -587,7 +587,7 @@ class Broker:
                 self.status = BrokerStatus.ACTIVE
                 return
         
-        print("Failed to join via any seed broker, becoming initial leader")
+        print(f"[{self.broker_id}] Failed to join via any seed broker, becoming initial leader")
         self._become_initial_leader()
     
     def _try_join_via_seed(self, seed_addr: str) -> bool:
@@ -870,10 +870,10 @@ class Broker:
                             print(f"[{self.broker_id}] Removing failed broker {broker_id} from cluster view")
                             del self.cluster_members[broker_id]
                     
-                    print("Leader failed, triggering election")
+                    print(f"[{self.broker_id}] Leader failed, triggering election")
                     self._trigger_leader_election()
                 else:
-                    print("Leader failed, but new leader already active")
+                    print(f"[{self.broker_id}] Leader failed, but new leader already active")
             elif self.role == BrokerRole.LEADER and failed_brokers:
                 # Leader can remove failed brokers from membership
                 for broker_id in failed_brokers:
@@ -1074,7 +1074,7 @@ class Broker:
                 self._handle_broker_failures(failed_contacts)
             self._become_leader([])
         else:
-            print("Election failed, insufficient votes")
+            print(f"[{self.broker_id}] Election failed, insufficient votes")
             # Clean up failed brokers even if election failed
             if failed_contacts:
                 self._handle_broker_failures(failed_contacts)
