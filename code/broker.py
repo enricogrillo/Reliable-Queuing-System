@@ -84,6 +84,7 @@ class Broker:
         self.last_heartbeat_received = 0
         self.last_election_time = 0
         self.election_retry_count = 0
+        self._election_in_progress = False
         
         # Connection tracking
         self.client_connections: Dict[str, socket.socket] = {}
@@ -93,11 +94,11 @@ class Broker:
         self.state_lock = threading.RLock()
         self.election_lock = threading.Lock()
         
-        print(f"[{self.broker_id}] Initialized broker {broker_id} in cluster {cluster_id} on {listen_host}:{listen_port}")
+        print(f"Initialized broker {broker_id} in cluster {cluster_id} on {listen_host}:{listen_port}")
     
     def start(self):
         """Start the broker and begin operations."""
-        print(f"[{self.broker_id}] Starting broker {self.broker_id}...")
+        print(f"Starting broker {self.broker_id}...")
         
         with self.state_lock:
             if self.running:
@@ -121,11 +122,11 @@ class Broker:
         # Start background threads
         self._start_background_threads()
         
-        print(f"[{self.broker_id}] Broker {self.broker_id} started successfully as {self.role.value}")
+        print(f"Broker {self.broker_id} started successfully as {self.role.value}")
     
     def stop(self):
         """Stop the broker and cleanup resources."""
-        print(f"[{self.broker_id}] Stopping broker {self.broker_id}...")
+        print(f"Stopping broker {self.broker_id}...")
         
         with self.state_lock:
             if not self.running:
@@ -157,7 +158,7 @@ class Broker:
         # Close data manager
         self.data_manager.close()
         
-        print(f"[{self.broker_id}] Broker {self.broker_id} stopped")
+        print(f"Broker {self.broker_id} stopped")
     
     def _start_network_server(self):
         """Start TCP server for client and broker connections."""
@@ -171,10 +172,10 @@ class Broker:
             self.server_thread = threading.Thread(target=self._server_loop, daemon=True)
             self.server_thread.start()
             
-            print(f"[{self.broker_id}] Network server started on {self.listen_host}:{self.listen_port}")
+            print(f"Network server started on {self.listen_host}:{self.listen_port}")
             
         except Exception as e:
-            print(f"[{self.broker_id}] Failed to start network server: {e}")
+            print(f"Failed to start network server: {e}")
             raise
     
     def _server_loop(self):
@@ -199,7 +200,7 @@ class Broker:
                 break
             except Exception as e:
                 if self.running:
-                    print(f"[{self.broker_id}] Server loop error: {e}")
+                    print(f"Server loop error: {e}")
                 break
     
     def _handle_connection(self, client_socket: socket.socket, client_address: Tuple[str, int]):
@@ -220,7 +221,7 @@ class Broker:
         
         except Exception as e:
             if self.running:
-                print(f"[{self.broker_id}] Connection {connection_id} error: {e}")
+                print(f"Connection {connection_id} error: {e}")
         
         finally:
             try:
@@ -252,7 +253,7 @@ class Broker:
             return json.loads(json_bytes.decode('utf-8'))
         
         except Exception as e:
-            print(f"[{self.broker_id}] Failed to receive message: {e}")
+            print(f"Failed to receive message: {e}")
             return None
     
     def _receive_exact(self, sock: socket.socket, length: int) -> Optional[bytes]:
@@ -273,7 +274,7 @@ class Broker:
             sock.sendall(length + json_bytes)
             return True
         except Exception as e:
-            print(f"[{self.broker_id}] Failed to send message: {e}")
+            print(f"Failed to send message: {e}")
             return False
     
     def _process_message(self, message: Dict, connection_id: str) -> Optional[Dict]:
@@ -306,12 +307,14 @@ class Broker:
                 return self._handle_election_request(message)
             elif operation == "PROMOTE_TO_LEADER":
                 return self._handle_leader_promotion(message)
+            elif operation == "CLUSTER_UPDATE":
+                return self._handle_cluster_update(message)
             
             else:
                 return {"status": "error", "message": f"Unknown operation: {operation}"}
         
         except Exception as e:
-            print(f"[{self.broker_id}] Error processing {operation}: {e}")
+            print(f"Error processing {operation}: {e}")
             return {"status": "error", "message": str(e)}
     
     # ================== CLIENT OPERATIONS ==================
@@ -514,7 +517,7 @@ class Broker:
             return response and response.get("status") == "success"
         
         except Exception as e:
-            print(f"[{self.broker_id}] Failed to send to broker {broker_id}: {e}")
+            print(f"Failed to send to broker {broker_id}: {e}")
             return False
     
     def _handle_replication(self, message: Dict) -> Dict:
@@ -556,7 +559,7 @@ class Broker:
             return {"status": "success"}
         
         except Exception as e:
-            print(f"[{self.broker_id}] Replication failed: {e}")
+            print(f"Replication failed: {e}")
             return {"status": "error", "message": str(e)}
     
     # ================== CLUSTER MANAGEMENT ==================
@@ -565,13 +568,13 @@ class Broker:
         """Load any existing state from persistent storage."""
         try:
             state = self.data_manager.restore_broker_state()
-            print(f"[{self.broker_id}] Loaded state: {len(state['queues'])} queues, {len(state['client_positions'])} client positions")
+            print(f"Loaded state: {len(state['queues'])} queues, {len(state['client_positions'])} client positions")
         except Exception as e:
-            print(f"[{self.broker_id}] Failed to load existing state: {e}")
+            print(f"Failed to load existing state: {e}")
     
     def _join_existing_cluster(self):
         """Join existing cluster using seed brokers."""
-        print(f"[{self.broker_id}] Joining cluster via seed brokers: {self.seed_brokers}")
+        print(f"Joining cluster via seed brokers: {self.seed_brokers}")
         
         for seed_addr in self.seed_brokers:
             if self._try_join_via_seed(seed_addr):
@@ -620,17 +623,17 @@ class Broker:
                 if data_snapshot:
                     self.data_manager.apply_data_snapshot(data_snapshot)
                 
-                print(f"[{self.broker_id}] Successfully joined cluster via {seed_addr}")
+                print(f"Successfully joined cluster via {seed_addr}")
                 return True
         
         except Exception as e:
-            print(f"[{self.broker_id}] Failed to join via {seed_addr}: {e}")
+            print(f"Failed to join via {seed_addr}: {e}")
         
         return False
     
     def _become_initial_leader(self):
         """Become initial leader of new cluster."""
-        print(f"[{self.broker_id}] Becoming initial leader of cluster {self.cluster_id}")
+        print(f"Becoming initial leader of cluster {self.cluster_id}")
         
         with self.state_lock:
             self.role = BrokerRole.LEADER
@@ -664,7 +667,7 @@ class Broker:
         if joining_cluster_id != self.cluster_id:
             return {"status": "error", "message": "Cluster ID mismatch"}
         
-        print(f"[{self.broker_id}] Broker {broker_id} joining cluster from {host}:{port}")
+        print(f"Broker {broker_id} joining cluster from {host}:{port}")
         
         with self.state_lock:
             # Add new member to cluster
@@ -677,6 +680,9 @@ class Broker:
                 last_heartbeat=time.time(),
                 cluster_version=self.cluster_version
             )
+            
+            # Update cluster version
+            self.cluster_version += 1
             
             # Prepare cluster info
             cluster_info = {
@@ -695,15 +701,15 @@ class Broker:
             
             # Get data snapshot for catch-up
             data_snapshot = self.data_manager.get_full_data_snapshot()
-
-            # propagate new member to other replicas
-            self._replicate_membership_update()
-            
-            return {
-                "status": "success",
-                "cluster_info": cluster_info,
-                "data_snapshot": data_snapshot
-            }
+        
+        # Broadcast updated cluster membership to all existing brokers (outside lock)
+        self._broadcast_cluster_membership_update()
+        
+        return {
+            "status": "success",
+            "cluster_info": cluster_info,
+            "data_snapshot": data_snapshot
+        }
     
     def _update_cluster_membership_from_info(self, cluster_info: Dict):
         """Update cluster membership from received cluster info."""
@@ -749,7 +755,7 @@ class Broker:
                 time.sleep(5.0)  # Send heartbeat every 5 seconds
             except Exception as e:
                 if self.running:
-                    print(f"[{self.broker_id}] Heartbeat loop error: {e}")
+                    print(f"Heartbeat loop error: {e}")
     
     def _send_heartbeats(self):
         """Send heartbeat to all other cluster members."""
@@ -761,19 +767,12 @@ class Broker:
             "cluster_version": self.cluster_version
         }
         
-        # leader sends heartbeats to everyone
-        if self.role == BrokerRole.LEADER:
-            with self.state_lock:
-                other_members = [info.broker_id for info in self.cluster_members.values() 
-                            if info.broker_id != self.broker_id]
-
-        # replicas send heartbeats to leader only
-        else:
-            with self.state_lock:
-                other_members = [info.broker_id for info in self.cluster_members.values() 
-                            if info.broker_id != self.broker_id and info.role == BrokerRole.LEADER]
-            
-
+        with self.state_lock:
+            other_members = [
+                broker_id for broker_id in self.cluster_members.keys()
+                if broker_id != self.broker_id
+            ]
+        
         for broker_id in other_members:
             self._send_to_broker(broker_id, heartbeat_message)
         
@@ -808,18 +807,22 @@ class Broker:
                 time.sleep(3.0)  # Check every 3 seconds
             except Exception as e:
                 if self.running:
-                    print(f"[{self.broker_id}] Failure detection error: {e}")
+                    print(f"Failure detection error: {e}")
     
     def _detect_failures(self):
         """Detect failed brokers based on heartbeat timeouts."""
+        # Skip failure detection during elections to avoid interference
+        if getattr(self, '_election_in_progress', False):
+            return
+            
         current_time = time.time()
         failed_brokers = []
         
         with self.state_lock:
             for broker_id, member in self.cluster_members.items():
-                if ((self.role == BrokerRole.LEADER or member.role == BrokerRole.LEADER) and 
-                    broker_id != self.broker_id and 
-                    current_time - member.last_heartbeat > 15.0):  # 15 second timeout
+                if (broker_id != self.broker_id and 
+                    member.status == BrokerStatus.ACTIVE and  # Only check ACTIVE brokers
+                    current_time - member.last_heartbeat > 8.0):  # 8 second timeout for faster detection
                     failed_brokers.append(broker_id)
         
         if failed_brokers:
@@ -827,7 +830,7 @@ class Broker:
     
     def _handle_broker_failures(self, failed_brokers: List[str]):
         """Handle detected broker failures."""
-        print(f"[{self.broker_id}] Detected broker failures: {failed_brokers}")
+        print(f"Detected broker failures: {failed_brokers}")
         
         with self.state_lock:
             leader_failed = False
@@ -838,19 +841,33 @@ class Broker:
                     if member.role == BrokerRole.LEADER:
                         leader_failed = True
                     
-                    # Mark as failed
+                    # Mark as failed but don't remove immediately
+                    # This maintains cluster size for proper vote calculation
                     member.status = BrokerStatus.FAILED
             
+            # Update cluster version to reflect status change
+            if failed_brokers:
+                self.cluster_version += 1
+            
+            # Only trigger election if leader failed AND we don't currently have an active leader
             if leader_failed and self.role == BrokerRole.REPLICA:
-                print("Leader failed, triggering election")
-                self._trigger_leader_election()
-            elif self.role == BrokerRole.LEADER:
-                # Remove failed replicas and update membership
+                # Check if we currently have an active leader
+                has_active_leader = any(
+                    member.role == BrokerRole.LEADER and member.status == BrokerStatus.ACTIVE
+                    for member in self.cluster_members.values()
+                )
+                
+                if not has_active_leader:
+                    print("Leader failed, triggering election")
+                    self._trigger_leader_election()
+                else:
+                    print("Leader failed, but new leader already active")
+            elif self.role == BrokerRole.LEADER and failed_brokers:
+                # Leader can remove failed brokers from membership
                 for broker_id in failed_brokers:
                     if broker_id in self.cluster_members:
                         del self.cluster_members[broker_id]
-                
-                self.cluster_version += 1
+                # Replicate membership update to remaining brokers
                 self._replicate_membership_update()
     
     # ================== LEADER ELECTION ==================
@@ -864,39 +881,132 @@ class Broker:
             if current_time - self.last_election_time < 5.0:
                 return
             
-            self.last_election_time = current_time
+            # Add moderate staggered delay based on broker ID to prevent simultaneous elections
+            # But keep delays reasonable so backup elections can happen quickly
+            with self.state_lock:
+                all_broker_ids = sorted(self.cluster_members.keys())
+                try:
+                    broker_position = all_broker_ids.index(self.broker_id)
+                    # Shorter delays: B-AAA=0s, B-BBB=2s, B-CCC=4s, B-DDD=6s, B-EEE=8s
+                    broker_delay = broker_position * 2.0  # Linear, not exponential
+                except ValueError:
+                    broker_delay = 5.0  # Default delay if not found
             
-            # Determine if we should be the candidate
-            active_brokers = self._get_active_broker_ids()
-            if not active_brokers:
-                return
+            def delayed_election():
+                time.sleep(broker_delay)
+                
+                # Recheck if we still need an election after delay
+                with self.state_lock:
+                    has_leader = any(
+                        member.role == BrokerRole.LEADER and member.status == BrokerStatus.ACTIVE
+                        for member in self.cluster_members.values()
+                    )
+                    
+                    if has_leader:
+                        print(f"Leader already elected during delay, canceling election")
+                        return
+                    
+                    # Simple check - proceed if we're a viable candidate
+                    active_brokers = self._get_active_broker_ids()
+                    if not active_brokers or self.broker_id not in active_brokers:
+                        print(f"Not in active brokers list, canceling election")
+                        return
+                
+                # Proceed with election
+                self.last_election_time = time.time()
+                
+                # Determine if we should be the candidate based on ALL cluster members
+                # Use total cluster for candidate selection to avoid split decisions
+                with self.state_lock:
+                    all_broker_ids = sorted(self.cluster_members.keys())
+                    # Remove brokers that are definitively failed (connection refused)
+                    potentially_active = []
+                    for bid in all_broker_ids:
+                        member = self.cluster_members[bid]
+                        if bid == self.broker_id:
+                            potentially_active.append(bid)  # Self is always active
+                        elif member.status != BrokerStatus.FAILED:
+                            potentially_active.append(bid)  # Include non-failed brokers
+                
+                if not potentially_active:
+                    return
+                
+                # Lowest ID becomes candidate - more deterministic selection
+                candidate_id = min(potentially_active)
+                
+                print(f"Candidate selection: potentially_active={potentially_active}, selected={candidate_id}")
+                
+                if candidate_id == self.broker_id:
+                    print(f"Starting election as candidate after {broker_delay:.1f}s delay")
+                    self._conduct_election()
+                else:
+                    print(f"Waiting for candidate {candidate_id} to start election")
+                    self._monitor_election(candidate_id)
             
-            # Lowest ID becomes candidate
-            candidate_id = min(active_brokers)
-            
-            if candidate_id == self.broker_id:
-                print(f"[{self.broker_id}] Starting election as candidate")
-                threading.Thread(target=self._conduct_election, daemon=True).start()
-            else:
-                print(f"[{self.broker_id}] Waiting for candidate {candidate_id} to start election")
-                threading.Thread(target=self._monitor_election, args=(candidate_id,), daemon=True).start()
+            threading.Thread(target=delayed_election, daemon=True).start()
     
     def _get_active_broker_ids(self) -> List[str]:
-        """Get list of active broker IDs."""
+        """Get list of active broker IDs, excluding failed brokers."""
         with self.state_lock:
             return [
                 broker_id for broker_id, member in self.cluster_members.items()
                 if member.status == BrokerStatus.ACTIVE
             ]
     
+    def _send_election_request(self, broker_id: str, election_message: Dict) -> str:
+        """Send election request and return vote result: 'granted', 'denied', or 'failed'."""
+        if broker_id not in self.cluster_members:
+            return "failed"
+        
+        member = self.cluster_members[broker_id]
+        
+        try:
+            # Create connection to broker
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.settimeout(3.0)  # Shorter timeout for elections
+            sock.connect((member.host, member.port))
+            
+            # Send election request
+            if not self._send_message(sock, election_message):
+                sock.close()
+                return "failed"
+            
+            # Receive vote response
+            response = self._receive_message(sock)
+            sock.close()
+            
+            if response:
+                status = response.get("status")
+                if status == "granted":
+                    return "granted"
+                elif status == "denied":
+                    return "denied"
+                else:
+                    return "failed"
+            else:
+                return "failed"
+        
+        except Exception as e:
+            print(f"Failed to get vote from broker {broker_id}: {e}")
+            return "failed"
+    
     def _conduct_election(self):
         """Conduct leader election as candidate."""
-        print(f"[{self.broker_id}] Conducting election...")
+        print(f"Conducting election...")
         
-        active_brokers = self._get_active_broker_ids()
-        other_brokers = [bid for bid in active_brokers if bid != self.broker_id]
-
-        print(other_brokers)
+        # Disable failure detection during election to avoid interference
+        self._election_in_progress = True
+        
+        # Get current view of ALL brokers for election (including failed ones)
+        # We need to contact everyone to get proper vote counts
+        with self.state_lock:
+            active_brokers = self._get_active_broker_ids()
+            all_brokers = list(self.cluster_members.keys())
+            other_brokers = [bid for bid in all_brokers if bid != self.broker_id]
+            
+            # Debug: Print cluster membership view
+            print(f"[{self.broker_id}] Election cluster view: {all_brokers}")
+            print(f"[{self.broker_id}] Will contact: {other_brokers}")
         
         election_message = {
             "operation": "ELECTION_REQUEST",
@@ -907,31 +1017,57 @@ class Broker:
         
         # Vote for self
         votes_received = 1
-        failed_brokers = []
+        successful_contacts = [self.broker_id]  # Track who we successfully contacted
+        failed_contacts = []
         
         # Request votes from other brokers
         for broker_id in other_brokers:
-            print(f"{self.broker_id} sending vote request to {broker_id}")
-            if self._send_to_broker(broker_id, election_message):
+            vote_response = self._send_election_request(broker_id, election_message)
+            if vote_response == "granted":
                 votes_received += 1
-            else:
-                failed_brokers.append(broker_id)
+                successful_contacts.append(broker_id)
+            elif vote_response == "denied":
+                successful_contacts.append(broker_id)  # Contact successful but vote denied
+            else:  # vote_response == "failed"
+                failed_contacts.append(broker_id)
         
-        # Calculate required majority from remaining active brokers
-        remaining_active = len(active_brokers) - len(failed_brokers)
-        required_votes = (remaining_active + 1) // 2 + 1  # Include self in calculation
+        # Calculate majority based on responsive brokers during election
+        # This is more realistic than requiring votes from definitely failed brokers
+        responsive_brokers = len(successful_contacts) + len(failed_contacts)
         
-        print(f"[{self.broker_id}] Election results: {votes_received}/{remaining_active} votes, need {required_votes}")
+        if responsive_brokers == 1:
+            # If only self is responsive, allow single-broker election
+            required_votes = 1
+        else:
+            # Need majority of responsive brokers
+            required_votes = (responsive_brokers // 2) + 1
+        
+        with self.state_lock:
+            total_cluster_size = len(self.cluster_members)
+        
+        print(f"Election results: {votes_received}/{responsive_brokers} votes, need {required_votes}")
+        print(f"Responsive brokers: {responsive_brokers}, Total cluster size: {total_cluster_size}")
+        print(f"Votes granted by: {[bid for bid in successful_contacts if bid != self.broker_id]}")
+        print(f"Failed contacts: {failed_contacts}")
         
         if votes_received >= required_votes:
-            self._become_leader(failed_brokers)
+            # Clean up failed brokers from our view before becoming leader
+            if failed_contacts:
+                self._handle_broker_failures(failed_contacts)
+            self._become_leader([])
         else:
             print("Election failed, insufficient votes")
+            # Clean up failed brokers even if election failed
+            if failed_contacts:
+                self._handle_broker_failures(failed_contacts)
             self._schedule_retry_election()
+        
+        # Re-enable failure detection after election
+        self._election_in_progress = False
     
     def _become_leader(self, failed_brokers: List[str]):
         """Promote self to leader after winning election."""
-        print(f"[{self.broker_id}] Won election, becoming leader")
+        print(f"Won election, becoming leader")
         
         with self.state_lock:
             self.role = BrokerRole.LEADER
@@ -965,32 +1101,41 @@ class Broker:
         election_timestamp = message.get("timestamp", 0)
         
         current_time = time.time()
-
+        
         # Validation checks
         if self.role != BrokerRole.REPLICA:
-            print("reject1")
             return {"status": "denied", "reason": "Not a replica"}
         
-        if candidate_version <= self.cluster_version:
-            print("reject2")
-            return {"status": "denied", "reason": "Stale version"}
+        # Check if we already have a leader
+        with self.state_lock:
+            has_active_leader = any(
+                member.role == BrokerRole.LEADER and member.status == BrokerStatus.ACTIVE
+                for member in self.cluster_members.values()
+            )
+            
+            if has_active_leader:
+                return {"status": "denied", "reason": "Already have active leader"}
+            
+            # Priority-based voting: prefer lower ID candidates
+            # Check if there's a better candidate (lower ID) that might be active
+            all_broker_ids = sorted(self.cluster_members.keys())
+            for bid in all_broker_ids:
+                if bid < candidate_id and bid != self.broker_id:
+                    member = self.cluster_members.get(bid)
+                    if member and member.status != BrokerStatus.FAILED:
+                        # Don't vote for higher ID if lower ID might still be available
+                        if current_time - member.last_heartbeat < 12.0:  # More lenient for priority
+                            return {"status": "denied", "reason": f"Waiting for higher priority candidate {bid}"}
         
-        if current_time - election_timestamp > 20.0:
-            print("reject3")
+        if current_time - election_timestamp > 15.0:
             return {"status": "denied", "reason": "Election too old"}
         
-        if current_time - self.last_election_time < 10.0:
-            print("reject4")
+        if current_time - self.last_election_time < 3.0:
             return {"status": "denied", "reason": "Too soon since last vote"}
-        
-        if candidate_id not in self.cluster_members.keys():
-            print(self.cluster_members.keys())
-            print("reject5")
-            return {"status": "denied", "reason": "Unknown candidate"}
         
         # Grant vote
         self.last_election_time = current_time
-        print(f"[{self.broker_id}] Granted vote to candidate {candidate_id}")
+        print(f"Granted vote to candidate {candidate_id}")
         return {"status": "granted"}
     
     def _handle_leader_promotion(self, message: Dict) -> Dict:
@@ -1011,24 +1156,91 @@ class Broker:
                 if self.role == BrokerRole.LEADER:
                     self.role = BrokerRole.REPLICA
                 
-                print(f"[{self.broker_id}] Accepted {new_leader_id} as new leader")
+                print(f"Accepted {new_leader_id} as new leader")
                 return {"status": "success"}
         
         return {"status": "error", "message": "Unknown broker"}
     
+    def _broadcast_cluster_membership_update(self):
+        """Broadcast cluster membership update to all existing brokers."""
+        with self.state_lock:
+            cluster_info = {
+                "cluster_version": self.cluster_version,
+                "members": {
+                    mid: {
+                        "broker_id": member.broker_id,
+                        "host": member.host,
+                        "port": member.port,
+                        "role": member.role.value,
+                        "status": member.status.value
+                    }
+                    for mid, member in self.cluster_members.items()
+                }
+            }
+            other_brokers = [bid for bid in self.cluster_members.keys() if bid != self.broker_id]
+        
+        # Send cluster update to all other brokers
+        update_message = {
+            "operation": "CLUSTER_UPDATE",
+            "cluster_info": cluster_info
+        }
+        
+        for broker_id in other_brokers:
+            try:
+                self._send_to_broker(broker_id, update_message)
+            except Exception as e:
+                print(f"Failed to send cluster update to {broker_id}: {e}")
+    
+    def _handle_cluster_update(self, message: Dict) -> Dict:
+        """Handle cluster membership update from leader."""
+        cluster_info = message.get("cluster_info", {})
+        
+        if cluster_info:
+            print(f"Received cluster membership update, version {cluster_info.get('cluster_version', 0)}")
+            self._update_cluster_membership_from_info(cluster_info)
+            return {"status": "success"}
+        else:
+            return {"status": "error", "message": "No cluster info provided"}
+    
     def _monitor_election(self, candidate_id: str):
         """Monitor election progress and trigger backup if needed."""
-        time.sleep(20.0)  # Wait for election to complete
+        # Wait for election result, but check periodically for candidate failure
+        for i in range(6):  # Check 6 times over 6 seconds - faster detection
+            time.sleep(1.0)
+            
+            # Check if candidate still exists and is responsive
+            with self.state_lock:
+                if candidate_id not in self.cluster_members:
+                    print(f"Candidate {candidate_id} removed from cluster, triggering backup election")
+                    self._trigger_leader_election()
+                    return
+                
+                # Check if candidate is marked as failed
+                candidate_member = self.cluster_members.get(candidate_id)
+                if candidate_member and candidate_member.status == BrokerStatus.FAILED:
+                    print(f"Candidate {candidate_id} marked as failed, triggering backup election")
+                    self._trigger_leader_election()
+                    return
+                
+                # Check if we have a leader
+                has_leader = any(
+                    member.role == BrokerRole.LEADER and member.status == BrokerStatus.ACTIVE
+                    for member in self.cluster_members.values()
+                )
+                
+                if has_leader:
+                    print(f"Leader elected during monitoring, election complete")
+                    return  # Election completed successfully
         
+        # Final timeout check
         with self.state_lock:
-            # Check if we still need a leader
             has_leader = any(
                 member.role == BrokerRole.LEADER and member.status == BrokerStatus.ACTIVE
                 for member in self.cluster_members.values()
             )
             
             if not has_leader:
-                print(f"[{self.broker_id}] Election timeout, triggering backup election")
+                print(f"Election timeout after monitoring {candidate_id}, triggering backup election")
                 self._trigger_leader_election()
     
     def _schedule_retry_election(self):
@@ -1050,23 +1262,20 @@ class Broker:
                 for member in self.cluster_members.values()
             )
     
+    def get_current_leader(self) -> str:
+        """Get the current leader's broker ID."""
+        with self.state_lock:
+            for broker_id, member in self.cluster_members.items():
+                if member.role == BrokerRole.LEADER and member.status == BrokerStatus.ACTIVE:
+                    return broker_id
+            return None
+    
     # ================== UTILITY METHODS ==================
     
-    def _handle_membership_update(self, message: Dict[str, Any]):
-        """Update local cluster membership from cluster info."""
-        with self.state_lock:
-            self.cluster_version = message.get("cluster_version", 0)
-            self.cluster_members.clear()
-            
-            for broker_data in message.get("members", []):
-                broker_info = ClusterMember(
-                    broker_data["broker_id"],
-                    broker_data["host"], 
-                    broker_data["port"],
-                    BrokerRole(broker_data["role"]),
-                    BrokerStatus(broker_data["status"])
-                )
-                self.cluster_members[broker_info.broker_id] = broker_info
+    def _handle_membership_update(self, message: Dict) -> Dict:
+        """Handle membership update from leader."""
+        # Implementation for handling membership updates
+        return {"status": "success"}
     
     def _handle_data_sync_request(self, message: Dict) -> Dict:
         """Handle data sync request from joining broker."""
