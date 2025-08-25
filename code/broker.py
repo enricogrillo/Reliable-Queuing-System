@@ -146,12 +146,12 @@ class Broker:
                     # Apply data snapshot if provided for catch-up
                     data_snapshot = response.get("data_snapshot")
                     if data_snapshot:
-                        print(f"[Broker {self.broker_id}] Applying data snapshot for catch-up...")
+                        print(f"[{self.broker_id}] Applying data snapshot for catch-up...")
                         success = self.data_manager.apply_data_snapshot(data_snapshot)
                         if success:
-                            print(f"[Broker {self.broker_id}] Successfully caught up with cluster data")
+                            print(f"[{self.broker_id}] Successfully caught up with cluster data")
                         else:
-                            print(f"[Broker {self.broker_id}] Failed to apply data snapshot")
+                            print(f"[{self.broker_id}] Failed to apply data snapshot")
                     
                     sock.close()
                     return True
@@ -159,14 +159,14 @@ class Broker:
                 sock.close()
                 
             except Exception as e:
-                print(f"[Broker {self.broker_id}] Failed to connect to seed broker {seed_broker}: {e}")
+                print(f"[{self.broker_id}] Failed to connect to seed broker {seed_broker}: {e}")
                 continue
         
         return False
     
     def _become_initial_leader(self):
         """Become the initial leader of a new cluster."""
-        print(f"[Broker {self.broker_id}] Becoming initial leader of cluster {self.cluster_id}")
+        print(f"[{self.broker_id}] Becoming initial leader of cluster {self.cluster_id}")
         self.role = BrokerRole.LEADER
         self.cluster_version += 1
         
@@ -261,7 +261,7 @@ class Broker:
             try:
                 self._send_to_broker(broker_info, heartbeat_msg)
             except Exception as e:
-                print(f"Failed to send heartbeat to {broker_info.broker_id}: {e}")
+                print(f"[{self.broker_id}] Failed to send heartbeat to {broker_info.broker_id}: {e}")
 
     
     def detect_failures(self):
@@ -279,7 +279,7 @@ class Broker:
                     broker_info.status = BrokerStatus.FAILED
 
         if failed_brokers:
-            print(f"[Broker {self.broker_id}] Detected failed brokers: {failed_brokers}")
+            print(f"[{self.broker_id}] Detected failed brokers: {failed_brokers}")
             self._handle_broker_failures(failed_brokers)
     
     def _handle_broker_failures(self, failed_brokers: List[str]):
@@ -299,7 +299,7 @@ class Broker:
     
     def _trigger_leader_election(self):
         """Trigger leader election process."""
-        print(f"[Broker {self.broker_id}] Triggering leader election")
+        print(f"[{self.broker_id}] Triggering leader election")
         
         # Simple election: broker with lowest ID becomes leader
         with self.cluster_lock:
@@ -313,7 +313,7 @@ class Broker:
     
     def promote_to_leader(self):
         """Transition from replica to leader role."""
-        print(f"[Broker {self.broker_id}] Promoting to leader")
+        print(f"[{self.broker_id}] Promoting to leader")
         
         self.role = BrokerRole.LEADER
         self.cluster_version += 1
@@ -345,7 +345,7 @@ class Broker:
             
             if removed_brokers:
                 self.cluster_version += 1
-                print(f"[Broker {self.broker_id}] Removed failed brokers from cluster: {removed_brokers}")
+                print(f"[{self.broker_id}] Removed failed brokers from cluster: {removed_brokers}")
         
         # Propagate membership change to remaining healthy brokers
         if removed_brokers:
@@ -486,7 +486,7 @@ class Broker:
                 if response and response.get("status") == "success":
                     acks_received += 1
             except Exception as e:
-                print(f"Failed to replicate to {replica.broker_id}: {e}")
+                print(f"[{self.broker_id}] Failed to replicate to {replica.broker_id}: {e}")
         
         return acks_received >= required_acks
     
@@ -535,7 +535,7 @@ class Broker:
             try:
                 self._send_to_broker(replica, message)
             except Exception as e:
-                print(f"Failed to broadcast to {replica.broker_id}: {e}")
+                print(f"[{self.broker_id}] Failed to broadcast to {replica.broker_id}: {e}")
     
     def _replicate_membership_change(self):
         """Replicate cluster membership changes to other brokers."""
@@ -648,7 +648,7 @@ class Broker:
                       if info.role == BrokerRole.LEADER and info.status == BrokerStatus.ACTIVE]
         
         if not leaders:
-            print(f"[Broker {self.broker_id}] No leader available for data sync")
+            print(f"[{self.broker_id}] No leader available for data sync")
             return False
         
         leader = leaders[0]
@@ -664,17 +664,17 @@ class Broker:
                 if data_snapshot:
                     success = self.data_manager.apply_data_snapshot(data_snapshot)
                     if success:
-                        print(f"[Broker {self.broker_id}] Successfully synchronized data from leader {leader.broker_id}")
+                        print(f"[{self.broker_id}] Successfully synchronized data from leader {leader.broker_id}")
                         return True
                     else:
-                        print(f"[Broker {self.broker_id}] Failed to apply data snapshot")
+                        print(f"[{self.broker_id}] Failed to apply data snapshot")
                         return False
             
-            print(f"[Broker {self.broker_id}] Data sync request failed: {response}")
+            print(f"[{self.broker_id}] Data sync request failed: {response}")
             return False
             
         except Exception as e:
-            print(f"[Broker {self.broker_id}] Failed to sync data from leader: {e}")
+            print(f"[{self.broker_id}] Failed to sync data from leader: {e}")
             return False
     
     def _send_to_broker(self, broker_info: BrokerInfo, message: Dict[str, Any]) -> Optional[Dict[str, Any]]:
@@ -690,7 +690,7 @@ class Broker:
             return response
             
         except Exception as e:
-            print(f"Failed to send message to {broker_info.broker_id}: {e}")
+            print(f"[{self.broker_id}] Failed to send message to {broker_info.broker_id}: {e}")
             return None
     
     # Background Threads
