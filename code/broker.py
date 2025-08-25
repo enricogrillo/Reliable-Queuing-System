@@ -864,6 +864,12 @@ class Broker:
                 )
                 
                 if not has_active_leader:
+                    # Remove failed brokers to allow proper majority calculations
+                    for broker_id in failed_brokers:
+                        if broker_id in self.cluster_members:
+                            print(f"[{self.broker_id}] Removing failed broker {broker_id} from cluster view")
+                            del self.cluster_members[broker_id]
+                    
                     print("Leader failed, triggering election")
                     self._trigger_leader_election()
                 else:
@@ -875,6 +881,7 @@ class Broker:
                         del self.cluster_members[broker_id]
                 # Replicate membership update to remaining brokers
                 self._replicate_membership_update()
+
     
     # ================== LEADER ELECTION ==================
     
