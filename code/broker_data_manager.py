@@ -60,6 +60,8 @@ class BrokerDataManager:
                 )
             """)
             
+
+            
             self.db_connection.commit()
     
     # Queue Operations
@@ -215,6 +217,97 @@ class BrokerDataManager:
         finally:
             self.transaction_lock.release()
     
+    # Data Synchronization Operations for Catch-up
+    def get_full_data_snapshot(self) -> Dict[str, Any]:
+        """Get complete snapshot of all data for broker catch-up."""
+        snapshot = {
+            'queues': [],
+            'messages': [],
+            'client_positions': []
+        }
+        
+        cursor = self.db_connection.cursor()
+        
+        # Get all queues
+        cursor.execute("SELECT queue_id FROM queues")
+        snapshot['queues'] = [row[0] for row in cursor.fetchall()]
+        
+        # Get all messages
+        cursor.execute("SELECT queue_id, sequence_num, data FROM queue_data ORDER BY queue_id, sequence_num")
+        snapshot['messages'] = [{'queue_id': row[0], 'sequence_num': row[1], 'data': row[2]} for row in cursor.fetchall()]
+        
+        # Get all client positions
+        cursor.execute("SELECT client_id, queue_id, read_position FROM client_positions")
+        snapshot['client_positions'] = [{'client_id': row[0], 'queue_id': row[1], 'position': row[2]} for row in cursor.fetchall()]
+        
+        return snapshot
+    
+    def apply_data_snapshot(self, snapshot: Dict[str, Any]) -> bool:
+        """Apply complete data snapshot during broker catch-up."""
+        try:
+            self.begin_transaction()
+            
+            # Clear existing data
+            cursor = self.db_connection.cursor()
+            cursor.execute("DELETE FROM client_positions")
+            cursor.execute("DELETE FROM queue_data")
+            cursor.execute("DELETE FROM queues")
+            
+            # Apply queues
+            for queue_id in snapshot.get('queues', []):
+                cursor.execute("INSERT INTO queues (queue_id) VALUES (?)", (queue_id,))
+            
+            # Apply messages
+            for msg in snapshot.get('messages', []):
+                cursor.execute(
+                    "INSERT INTO queue_data (queue_id, sequence_num, data) VALUES (?, ?, ?)",
+                    (msg['queue_id'], msg['sequence_num'], msg['data'])
+                )
+            
+            # Apply client positions
+            for pos in snapshot.get('client_positions', []):
+                cursor.execute(
+                    "INSERT INTO client_positions (client_id, queue_id, read_position) VALUES (?, ?, ?)",
+                    (pos['client_id'], pos['queue_id'], pos['position'])
+                )
+            
+            self.commit_transaction()
+            print(f"Applied data snapshot: {len(snapshot.get('queues', []))} queues, "
+                  f"{len(snapshot.get('messages', []))} messages, "
+                  f"{len(snapshot.get('client_positions', []))} client positions")
+            return True
+            
+        except Exception as e:
+            print(f"Failed to apply data snapshot: {e}")
+            self.rollback_transaction()
+            return False
+    
+    def get_queue_messages_since(self, queue_id: str, since_sequence: int) -> List[Tuple[int, int]]:
+        """Get messages from queue starting from a specific sequence number."""
+        cursor = self.db_connection.cursor()
+        cursor.execute(
+            "SELECT sequence_num, data FROM queue_data WHERE queue_id = ? AND sequence_num > ? ORDER BY sequence_num",
+            (queue_id, since_sequence)
+        )
+        return cursor.fetchall()
+    
+    def bulk_insert_messages(self, messages: List[Dict[str, Any]]) -> bool:
+        """Insert multiple messages for catch-up scenarios."""
+        try:
+            with self.transaction_lock:
+                cursor = self.db_connection.cursor()
+                for msg in messages:
+                    cursor.execute(
+                        "INSERT OR REPLACE INTO queue_data (queue_id, sequence_num, data) VALUES (?, ?, ?)",
+                        (msg['queue_id'], msg['sequence_num'], msg['data'])
+                    )
+                self.db_connection.commit()
+                return True
+        except Exception as e:
+            print(f"Failed to bulk insert messages: {e}")
+            return False
+    
+
     def close(self):
         """Close database connection."""
         if self.db_connection:

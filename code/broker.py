@@ -142,6 +142,17 @@ class Broker:
                 if response and response.get("status") == "success":
                     # Update cluster membership from response
                     self._update_cluster_membership(response.get("cluster_info", {}))
+                    
+                    # Apply data snapshot if provided for catch-up
+                    data_snapshot = response.get("data_snapshot")
+                    if data_snapshot:
+                        print(f"[Broker {self.broker_id}] Applying data snapshot for catch-up...")
+                        success = self.data_manager.apply_data_snapshot(data_snapshot)
+                        if success:
+                            print(f"[Broker {self.broker_id}] Successfully caught up with cluster data")
+                        else:
+                            print(f"[Broker {self.broker_id}] Failed to apply data snapshot")
+                    
                     sock.close()
                     return True
                 
@@ -199,9 +210,13 @@ class Broker:
         # Replicate membership change to other brokers
         self._replicate_membership_change()
         
+        # Get data snapshot for the new broker to catch up
+        data_snapshot = self.data_manager.get_full_data_snapshot()
+        
         return {
             "status": "success",
-            "cluster_info": cluster_info
+            "cluster_info": cluster_info,
+            "data_snapshot": data_snapshot
         }
     
     def _update_cluster_membership(self, cluster_info: Dict[str, Any]):
@@ -276,6 +291,10 @@ class Broker:
             if broker_id in self.cluster_members
         )
         
+        # Remove failed brokers from cluster membership
+        if self.role == BrokerRole.LEADER:
+            self._remove_failed_brokers_from_cluster(failed_brokers)
+        
         if leader_failed and self.role == BrokerRole.REPLICA:
             self._trigger_leader_election()
     
@@ -312,6 +331,26 @@ class Broker:
         }
         
         self._broadcast_to_replicas(promotion_msg)
+    
+    def _remove_failed_brokers_from_cluster(self, failed_brokers: List[str]):
+        """Remove failed brokers from cluster membership and propagate changes."""
+        if self.role != BrokerRole.LEADER:
+            return
+        
+        removed_brokers = []
+        with self.cluster_lock:
+            for broker_id in failed_brokers:
+                if broker_id in self.cluster_members:
+                    del self.cluster_members[broker_id]
+                    removed_brokers.append(broker_id)
+            
+            if removed_brokers:
+                self.cluster_version += 1
+                print(f"[Broker {self.broker_id}] Removed failed brokers from cluster: {removed_brokers}")
+        
+        # Propagate membership change to remaining healthy brokers
+        if removed_brokers:
+            self._replicate_membership_change()
     
     # Client Operations
     def create_queue(self) -> Dict[str, Any]:
@@ -573,6 +612,10 @@ class Broker:
         
         elif operation == "MEMBERSHIP_UPDATE":
             return self._update_cluster_membership(message['cluster_info'])
+        
+        elif operation == "DATA_SYNC_REQUEST":
+            return self._handle_data_sync_request(message)
+        
         else:
             return {"status": "error", "message": f"Unknown operation: {operation}"}
     
@@ -585,6 +628,55 @@ class Broker:
                 self.cluster_members[broker_id].last_heartbeat = time.time()
         
         return {"status": "success"}
+    
+    def _handle_data_sync_request(self, message: Dict[str, Any]) -> Dict[str, Any]:
+        """Handle data synchronization request from another broker."""
+        if self.role != BrokerRole.LEADER:
+            return {"status": "error", "message": "Only leader can provide data snapshot"}
+        
+        # Generate and return data snapshot
+        data_snapshot = self.data_manager.get_full_data_snapshot()
+        
+        return {
+            "status": "success",
+            "data_snapshot": data_snapshot
+        }
+    
+    def request_data_sync_from_leader(self) -> bool:
+        """Request data synchronization from the current leader."""
+        with self.cluster_lock:
+            leaders = [info for info in self.cluster_members.values() 
+                      if info.role == BrokerRole.LEADER and info.status == BrokerStatus.ACTIVE]
+        
+        if not leaders:
+            print(f"[Broker {self.broker_id}] No leader available for data sync")
+            return False
+        
+        leader = leaders[0]
+        try:
+            sync_request = {
+                "operation": "DATA_SYNC_REQUEST",
+                "broker_id": self.broker_id
+            }
+            
+            response = self._send_to_broker(leader, sync_request)
+            if response and response.get("status") == "success":
+                data_snapshot = response.get("data_snapshot")
+                if data_snapshot:
+                    success = self.data_manager.apply_data_snapshot(data_snapshot)
+                    if success:
+                        print(f"[Broker {self.broker_id}] Successfully synchronized data from leader {leader.broker_id}")
+                        return True
+                    else:
+                        print(f"[Broker {self.broker_id}] Failed to apply data snapshot")
+                        return False
+            
+            print(f"[Broker {self.broker_id}] Data sync request failed: {response}")
+            return False
+            
+        except Exception as e:
+            print(f"[Broker {self.broker_id}] Failed to sync data from leader: {e}")
+            return False
     
     def _send_to_broker(self, broker_info: BrokerInfo, message: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """Send message to specific broker and return response."""
