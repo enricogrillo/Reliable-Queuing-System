@@ -708,9 +708,16 @@ Use '.' for auto-generated IDs and ports"""
             except:
                 role = "Leader" if i == 0 else "Replica"
             
+            # Try to get who this broker thinks is the leader
+            try:
+                current_leader = broker_instance.broker.get_current_leader() if hasattr(broker_instance.broker, 'get_current_leader') else None
+                leader_view = f" | thinks leader: {current_leader}" if current_leader else " | thinks leader: None"
+            except:
+                leader_view = " | thinks leader: Unknown"
+            
             status = "✓" if broker_instance.is_alive() else "✗"
             prefix = "├─" if i < len(broker_ids) - 1 else "└─"
-            print(f"{prefix} {role}: {broker_id} ({broker_instance.host}:{broker_instance.port}) {status}")
+            print(f"{prefix} {role}: {broker_id} ({broker_instance.host}:{broker_instance.port}) {status}{leader_view}")
     
     def _cmd_show_queues(self, args):
         """Show broker queues: q <broker_id>"""
