@@ -145,6 +145,7 @@ class BrokerSpawner:
         self.next_port = 9001
         self.history_file = os.path.expanduser("~/.broker_spawner_history")
         self.running = True
+        self.last_cluster_id = None  # Cache last cluster ID for convenience commands
         
         # Setup readline
         self._setup_readline()
@@ -160,7 +161,7 @@ class BrokerSpawner:
         readline.set_history_length(1000)
         
         # Basic tab completion
-        commands = ['h', 's', 'sb', 'sc', 'sn', 'l', 'k', 'kb', 'ka', 't', 'q', 'ip', 'fi', 'a', 'ua', 'x']
+        commands = ['h', 's', 'sb', 'sc', 'sn', 'l', 'k', 'kb', 'ka', 'kl', 'km', 't', 'q', 'ip', 'fi', 'a', 'ua', 'x']
         def completer(text, state):
             options = [cmd for cmd in commands if cmd.startswith(text)]
             if state < len(options):
@@ -274,6 +275,10 @@ class BrokerSpawner:
                 self._cmd_kill_broker(args)
             elif cmd == 'ka':
                 self._cmd_kill_all()
+            elif cmd == 'kl':
+                self._cmd_kill_leader(args)
+            elif cmd == 'km':
+                self._cmd_kill_min_broker(args)
             elif cmd == 't':
                 self._cmd_show_topology(args)
             elif cmd == 'q':
@@ -305,7 +310,9 @@ class BrokerSpawner:
   k  <cluster>                       - Kill cluster
   kb <broker>                        - Kill broker
   ka                                 - Kill all clusters
-  t  <cluster>                       - Show topology
+  kl [cluster]                       - Kill leader (uses last cluster if not specified)
+  km [cluster]                       - Kill min broker ID (uses last cluster if not specified)
+  t  [cluster]                       - Show topology (uses last cluster if not specified)
   q  <broker>                        - Show broker queues
   ip                                 - Show IP mappings
   a  <name> <ip>                     - Add IP alias
@@ -369,6 +376,7 @@ Use '.' for auto-generated IDs and ports"""
                 seed_brokers = [f"{host}:{port}"]
         
         if spawned:
+            self.last_cluster_id = cluster_id  # Cache for convenience commands
             port_range = f"{start_port}-{start_port + len(spawned) - 1}" if len(spawned) > 1 else str(start_port)
             print(f"Spawned cluster {cluster_id} with {len(spawned)} brokers on ports {port_range}")
         else:
@@ -406,6 +414,7 @@ Use '.' for auto-generated IDs and ports"""
         
         broker_instance = self._create_broker_instance(broker_id, cluster_id, host, port, seed_brokers)
         if broker_instance:
+            self.last_cluster_id = cluster_id  # Cache for convenience commands
             join_msg = f", joining via seed brokers" if seed_brokers else ""
             print(f"Spawned broker {broker_id} in cluster {cluster_id} on {host}:{port}{join_msg}")
         else:
@@ -441,6 +450,7 @@ Use '.' for auto-generated IDs and ports"""
                 seed_brokers = [f"{host}:{port}"]
         
         if spawned:
+            self.last_cluster_id = cluster_id  # Cache for convenience commands
             port_range = f"{start_port}-{start_port + len(spawned) - 1}" if len(spawned) > 1 else str(start_port)
             print(f"Spawned cluster {cluster_id} with {len(spawned)} brokers on loc:{port_range}")
         else:
@@ -459,6 +469,7 @@ Use '.' for auto-generated IDs and ports"""
         
         broker_instance = self._create_broker_instance(broker_id, cluster_id, host, port)
         if broker_instance:
+            self.last_cluster_id = cluster_id  # Cache for convenience commands
             print(f"Spawned broker {broker_id} in cluster {cluster_id} on {args[0]}:{port}")
         else:
             print("Failed to spawn broker")
@@ -580,13 +591,102 @@ Use '.' for auto-generated IDs and ports"""
         
         print(f"Killed all clusters ({total_killed} brokers total)")
     
-    def _cmd_show_topology(self, args):
-        """Show cluster topology: t <cluster_id>"""
+    def _cmd_kill_leader(self, args):
+        """Kill leader broker: kl [cluster_id]"""
         if not args:
-            print("Usage: t <cluster_id>")
+            if not self.last_cluster_id:
+                print("Usage: kl <cluster_id> (no cached cluster available)")
+                return
+            cluster_id = self.last_cluster_id
+        else:
+            cluster_id = args[0]
+        
+        if cluster_id not in self.clusters:
+            print(f"Cluster {cluster_id} not found")
             return
         
-        cluster_id = args[0]
+        # Find the leader broker
+        leader_broker_id = None
+        alive_brokers = [bid for bid in self.clusters[cluster_id] if bid in self.brokers and self.brokers[bid].is_alive()]
+        
+        if not alive_brokers:
+            print(f"No alive brokers in cluster {cluster_id}")
+            return
+        
+        # Check each broker's role to find the leader
+        for broker_id in alive_brokers:
+            broker_instance = self.brokers[broker_id]
+            try:
+                if hasattr(broker_instance.broker, 'role') and broker_instance.broker.role.value.lower() == 'leader':
+                    leader_broker_id = broker_id
+                    break
+            except:
+                pass
+        
+        if not leader_broker_id:
+            # Fallback: assume first broker is leader if we can't determine role
+            leader_broker_id = alive_brokers[0]
+            print(f"Could not determine leader, assuming {leader_broker_id} is leader")
+        
+        # Kill the leader
+        broker = self.brokers[leader_broker_id]
+        broker.stop()
+        del self.brokers[leader_broker_id]
+        
+        # Remove from cluster
+        if cluster_id in self.clusters:
+            self.clusters[cluster_id].remove(leader_broker_id)
+            if not self.clusters[cluster_id]:
+                del self.clusters[cluster_id]
+        
+        print(f"Killed leader broker {leader_broker_id} in cluster {cluster_id}")
+    
+    def _cmd_kill_min_broker(self, args):
+        """Kill broker with minimum ID: km [cluster_id]"""
+        if not args:
+            if not self.last_cluster_id:
+                print("Usage: km <cluster_id> (no cached cluster available)")
+                return
+            cluster_id = self.last_cluster_id
+        else:
+            cluster_id = args[0]
+        
+        if cluster_id not in self.clusters:
+            print(f"Cluster {cluster_id} not found")
+            return
+        
+        # Find alive brokers and get the one with minimum ID
+        alive_brokers = [bid for bid in self.clusters[cluster_id] if bid in self.brokers and self.brokers[bid].is_alive()]
+        
+        if not alive_brokers:
+            print(f"No alive brokers in cluster {cluster_id}")
+            return
+        
+        # Get broker with minimum ID (alphabetically)
+        min_broker_id = min(alive_brokers)
+        
+        # Kill the broker
+        broker = self.brokers[min_broker_id]
+        broker.stop()
+        del self.brokers[min_broker_id]
+        
+        # Remove from cluster
+        if cluster_id in self.clusters:
+            self.clusters[cluster_id].remove(min_broker_id)
+            if not self.clusters[cluster_id]:
+                del self.clusters[cluster_id]
+        
+        print(f"Killed min broker ID {min_broker_id} in cluster {cluster_id}")
+    
+    def _cmd_show_topology(self, args):
+        """Show cluster topology: t [cluster_id]"""
+        if not args:
+            if not self.last_cluster_id:
+                print("Usage: t <cluster_id> (no cached cluster available)")
+                return
+            cluster_id = self.last_cluster_id
+        else:
+            cluster_id = args[0]
         if cluster_id not in self.clusters:
             print(f"Cluster {cluster_id} not found")
             return
