@@ -102,10 +102,11 @@ class ClusterTopology:
             )
             self.brokers[broker_info.broker_id] = broker_info
     
-    def get_leaders(self) -> List[BrokerInfo]:
-        """Get healthy leader brokers."""
-        return [b for b in self.brokers.values() 
-                if b.role == BrokerRole.LEADER and b.is_healthy]
+    def get_leader(self) -> Optional[BrokerInfo]:
+        """Get the first healthy leader broker."""
+        leaders = [b for b in self.brokers.values() 
+                  if b.role == BrokerRole.LEADER and b.is_healthy]
+        return leaders[0] if leaders else None
     
     def get_replicas(self) -> List[BrokerInfo]:
         """Get healthy replica brokers."""
@@ -134,7 +135,7 @@ class Client:
         
         # Seed brokers and cluster discovery
         self.seed_brokers = list(seed_brokers) if seed_brokers else []
-        self.clusters = {}  # cluster_id -> {topology, leader_index, is_connected}
+        self.clusters = {}  # cluster_id -> {topology, is_connected}
         self.cluster_creation_index = 0
         
         # Background refresh
@@ -202,7 +203,6 @@ class Client:
         
         self.clusters[cluster_id] = {
             'topology': topology,
-            'leader_index': 0,
             'is_connected': True,
             'seed_brokers': [broker_addr]
         }
@@ -321,7 +321,7 @@ class Client:
             "data": data,
             "client_id": self.client_id
         }
-        return self._execute_request_on_cluster(request, cluster_id, queue_id)
+        return self._execute_request_on_cluster(request, cluster_id)
     
     def read_message(self, queue_id: str) -> Dict[str, Any]:
         """Read next message from leader broker (automatically routes to correct cluster)."""
@@ -341,7 +341,7 @@ class Client:
             "queue_name": queue_id,
             "client_id": self.client_id
         }
-        return self._execute_request_on_cluster(request, cluster_id, queue_id)
+        return self._execute_request_on_cluster(request, cluster_id)
     
     def queue_exists(self, queue_id: str) -> bool:
         """Check if queue exists by attempting to read from it."""
@@ -378,7 +378,7 @@ class Client:
         return all_info
     
     # Private Methods
-    def _execute_request_on_cluster(self, request: Dict[str, Any], cluster_id: str, queue_id: str = None) -> Dict[str, Any]:
+    def _execute_request_on_cluster(self, request: Dict[str, Any], cluster_id: str) -> Dict[str, Any]:
         """Execute operation on specific cluster with automatic failover."""
         cluster = self.clusters.get(cluster_id)
         if not cluster:
@@ -390,7 +390,7 @@ class Client:
         
         for attempt in range(self.retry_attempts):
             try:
-                broker = self._select_leader_for_cluster(cluster_id, queue_id)
+                broker = topology.get_leader()
                 if not broker:
                     return {"status": "error", "message": f"No leaders available in cluster {cluster_id}"}
                 
@@ -408,26 +408,6 @@ class Client:
                     time.sleep(0.5)
         
         return {"status": "error", "message": f"All brokers unavailable in cluster {cluster_id}"}
-    
-    def _select_leader_for_cluster(self, cluster_id: str, queue_id: str = None) -> Optional[BrokerInfo]:
-        """Choose leader broker from specific cluster."""
-        cluster = self.clusters.get(cluster_id)
-        if not cluster:
-            return None
-        
-        topology = cluster.get('topology')
-        if not topology:
-            return None
-        
-        leaders = topology.get_leaders()
-        if not leaders:
-            return None
-        
-        # Round-robin through available leaders in this cluster
-        leader_index = cluster.get('leader_index', 0)
-        leader = leaders[leader_index % len(leaders)]
-        cluster['leader_index'] = leader_index + 1
-        return leader
     
     def _create_connection(self, broker: BrokerInfo) -> socket.socket:
         """Create connection to specific broker."""
