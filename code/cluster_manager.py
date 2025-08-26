@@ -9,7 +9,7 @@ from typing import Dict, List, Optional, Callable
 from dataclasses import dataclass
 from enum import Enum
 
-from .broker import BrokerRole, BrokerStatus, ClusterMember
+from .types import BrokerRole, BrokerStatus, ClusterMember
 
 
 class ClusterManager:

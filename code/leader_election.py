@@ -8,7 +8,7 @@ import random
 import threading
 from typing import Dict, List, Optional, Callable
 
-from .broker import BrokerRole, BrokerStatus
+from .types import BrokerRole, BrokerStatus
 
 
 class LeaderElection:

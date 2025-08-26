@@ -7,9 +7,7 @@ Based on the original broker.py but organized with helper classes for better mai
 import json
 import time
 import threading
-from enum import Enum
 from typing import Dict, List, Optional, Tuple, Any
-from dataclasses import dataclass
 
 from .broker_data_manager import BrokerDataManager
 from .id_generator import generate_queue_id
@@ -17,32 +15,7 @@ from .network_handler import NetworkHandler
 from .cluster_manager import ClusterManager
 from .leader_election import LeaderElection
 from .replication_manager import ReplicationManager
-
-
-class BrokerRole(Enum):
-    """Broker role enumeration."""
-    LEADER = "leader"
-    REPLICA = "replica"
-
-
-class BrokerStatus(Enum):
-    """Broker status enumeration."""
-    STARTING = "starting"
-    ACTIVE = "active"
-    FAILED = "failed"
-    STOPPED = "stopped"
-
-
-@dataclass
-class ClusterMember:
-    """Information about a cluster member."""
-    broker_id: str
-    host: str
-    port: int
-    role: BrokerRole
-    status: BrokerStatus
-    last_heartbeat: float
-    cluster_version: int
+from .types import BrokerRole, BrokerStatus, ClusterMember
 
 
 class Broker:
