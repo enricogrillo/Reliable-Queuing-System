@@ -10,6 +10,7 @@ import socket
 import threading
 import time
 import readline
+import argparse
 from typing import Dict, List, Optional, Tuple
 import json
 
@@ -17,6 +18,7 @@ import json
 sys.path.insert(0, 'code')
 from code.broker import Broker
 from code.id_generator import generate_broker_id, generate_cluster_id
+from broker_spawner_data_manager import BrokerSpawnerDataManager
 
 
 class IPManager:
@@ -138,7 +140,7 @@ class BrokerInstance:
 class BrokerSpawner:
     """Main broker spawner CLI application."""
     
-    def __init__(self):
+    def __init__(self, enable_persistence: bool = True):
         self.ip_manager = IPManager()
         self.brokers: Dict[str, BrokerInstance] = {}  # broker_id -> BrokerInstance
         self.clusters: Dict[str, List[str]] = {}      # cluster_id -> [broker_ids]
@@ -147,8 +149,18 @@ class BrokerSpawner:
         self.running = True
         self.last_cluster_id = None  # Cache last cluster ID for convenience commands
         
+        # Initialize data manager for persistence
+        self.data_manager = BrokerSpawnerDataManager(enabled=enable_persistence)
+        self.persistence_enabled = enable_persistence
+        
         # Setup readline
         self._setup_readline()
+        
+        # Load previous state if available
+        self._load_state()
+        
+        # Auto-start default cluster if no brokers are running
+        self._auto_start_cluster()
     
     def _setup_readline(self):
         """Setup readline for command history and completion."""
@@ -161,7 +173,7 @@ class BrokerSpawner:
         readline.set_history_length(1000)
         
         # Basic tab completion
-        commands = ['h', 's', 'sb', 'sc', 'sn', 'l', 'k', 'kb', 'ka', 'kl', 'km', 't', 'q', 'ip', 'fi', 'a', 'ua', 'x']
+        commands = ['h', 's', 'sb', 'sc', 'sn', 'l', 'k', 'kb', 'ka', 'kl', 'km', 't', 'q', 'ip', 'fi', 'a', 'ua', 'ps', 'pc', 'x']
         def completer(text, state):
             options = [cmd for cmd in commands if cmd.startswith(text)]
             if state < len(options):
@@ -177,6 +189,144 @@ class BrokerSpawner:
             readline.write_history_file(self.history_file)
         except:
             pass
+    
+    def _load_state(self):
+        """Load previous spawner state if available."""
+        if not self.persistence_enabled:
+            return
+        
+        try:
+            state = self.data_manager.load_state()
+            if not state:
+                return
+            
+            print(f"Loading previous state ({len(state.brokers)} brokers, {len(state.clusters)} clusters)...")
+            
+            # Restore IP aliases
+            self.ip_manager.custom_aliases.update(state.custom_ip_aliases)
+            
+            # Restore next port
+            self.next_port = state.next_port
+            
+            # Restore last cluster ID
+            self.last_cluster_id = state.last_cluster_id
+            
+            # Restore clusters dict structure first
+            self.clusters = state.clusters.copy()
+            
+            # Restore brokers - need to recreate them
+            restored_count = 0
+            failed_count = 0
+            
+            for broker_id, broker_config in state.brokers.items():
+                try:
+                    # Check if port is still available
+                    if self._is_port_in_use(broker_config.port):
+                        print(f"Warning: Port {broker_config.port} for broker {broker_id} is in use, skipping")
+                        failed_count += 1
+                        continue
+                    
+                    # Create broker instance (register=False since we're handling registration manually)
+                    broker_instance = self._create_broker_instance(
+                        broker_config.broker_id,
+                        broker_config.cluster_id,
+                        broker_config.host,
+                        broker_config.port,
+                        broker_config.seed_brokers,
+                        register=False
+                    )
+                    
+                    if broker_instance:
+                        # Restore start time
+                        broker_instance.start_time = broker_config.start_time
+                        # Register broker manually
+                        self.brokers[broker_id] = broker_instance
+                        restored_count += 1
+                    else:
+                        failed_count += 1
+                        
+                except Exception as e:
+                    print(f"Warning: Failed to restore broker {broker_id}: {e}")
+                    failed_count += 1
+            
+            # Clean up clusters that have no running brokers
+            clusters_to_remove = []
+            for cluster_id, broker_ids in self.clusters.items():
+                alive_brokers = [bid for bid in broker_ids if bid in self.brokers and self.brokers[bid].is_alive()]
+                if not alive_brokers:
+                    clusters_to_remove.append(cluster_id)
+                    print(f"Removing empty cluster {cluster_id}")
+                else:
+                    # Update cluster with only alive brokers
+                    self.clusters[cluster_id] = alive_brokers
+            
+            for cluster_id in clusters_to_remove:
+                del self.clusters[cluster_id]
+            
+            if restored_count > 0:
+                print(f"Restored {restored_count} brokers")
+            if failed_count > 0:
+                print(f"Failed to restore {failed_count} brokers")
+            
+            # Reset last_cluster_id if its cluster was removed
+            if self.last_cluster_id and self.last_cluster_id not in self.clusters:
+                self.last_cluster_id = None
+                
+        except Exception as e:
+            print(f"Warning: Failed to load previous state: {e}")
+    
+    def _save_state(self):
+        """Save current spawner state."""
+        if self.persistence_enabled:
+            self.data_manager.save_state(self)
+    
+    def _auto_start_cluster(self):
+        """Auto-start clusters from saved configuration if no brokers are running."""
+        if not self.persistence_enabled:
+            return
+        
+        # Check if any brokers are currently running
+        running_brokers = [bid for bid in self.brokers.keys() if self.brokers[bid].is_alive()]
+        
+        if not running_brokers and self.clusters:
+            print("No running brokers found but clusters exist in configuration. Restoring from saved state...")
+            
+            # Load the full state to get broker configurations
+            state = self.data_manager.load_state()
+            if state and state.brokers:
+                # Try to restore brokers from full configuration
+                restored_count = 0
+                for broker_id, broker_config in state.brokers.items():
+                    if broker_id not in self.brokers:  # Only restore if not already restored
+                        try:
+                            # Check if port is available
+                            if self._is_port_in_use(broker_config.port):
+                                print(f"Warning: Port {broker_config.port} for broker {broker_id} is in use, skipping")
+                                continue
+                            
+                            # Create broker instance
+                            broker_instance = self._create_broker_instance(
+                                broker_config.broker_id,
+                                broker_config.cluster_id,
+                                broker_config.host,
+                                broker_config.port,
+                                broker_config.seed_brokers,
+                                register=False
+                            )
+                            
+                            if broker_instance:
+                                broker_instance.start_time = broker_config.start_time
+                                self.brokers[broker_id] = broker_instance
+                                restored_count += 1
+                                
+                        except Exception as e:
+                            print(f"Warning: Failed to restore broker {broker_id}: {e}")
+                
+                if restored_count > 0:
+                    print(f"Restored {restored_count} brokers from configuration")
+                    self._save_state()
+                else:
+                    print("Failed to restore brokers from configuration")
     
     def _allocate_port(self) -> int:
         """Allocate next available port."""
@@ -194,7 +344,7 @@ class BrokerSpawner:
         except:
             return False
     
-    def _create_broker_instance(self, broker_id: str, cluster_id: str, host: str, port: int, seed_brokers: List[str] = None) -> Optional[BrokerInstance]:
+    def _create_broker_instance(self, broker_id: str, cluster_id: str, host: str, port: int, seed_brokers: List[str] = None, register: bool = True) -> Optional[BrokerInstance]:
         """Create and start a broker instance."""
         try:
             # Create broker object
@@ -212,11 +362,12 @@ class BrokerSpawner:
             # Start the broker
             broker_instance.start()
             
-            # Register broker
-            self.brokers[broker_id] = broker_instance
-            if cluster_id not in self.clusters:
-                self.clusters[cluster_id] = []
-            self.clusters[cluster_id].append(broker_id)
+            # Register broker if requested
+            if register:
+                self.brokers[broker_id] = broker_instance
+                if cluster_id not in self.clusters:
+                    self.clusters[cluster_id] = []
+                self.clusters[cluster_id].append(broker_id)
             
             return broker_instance
             
@@ -291,6 +442,10 @@ class BrokerSpawner:
                 self._cmd_add_alias(args)
             elif cmd == 'ua':
                 self._cmd_remove_alias(args)
+            elif cmd == 'ps':
+                self._cmd_persistence_status()
+            elif cmd == 'pc':
+                self._cmd_clear_persistence()
             elif cmd in ['x', 'exit', 'quit']:
                 print("Goodbye!")
                 self.running = False
@@ -301,7 +456,8 @@ class BrokerSpawner:
     
     def _cmd_help(self):
         """Display help information."""
-        help_text = """Broker Spawner Commands:
+        persistence_status = "enabled" if self.persistence_enabled else "disabled"
+        help_text = f"""Broker Spawner Commands:
   s  <cluster> <count> [seeds]       - Spawn cluster (auto-allocated ports)
   sb <cluster> <broker> <host> [port] [seeds] - Spawn broker
   sc [count]                         - Spawn cluster (auto ID/port)
@@ -317,10 +473,13 @@ class BrokerSpawner:
   ip                                 - Show IP mappings
   a  <name> <ip>                     - Add IP alias
   ua <name>                          - Remove IP alias
+  ps                                 - Show persistence status/info
+  pc                                 - Clear persistence data
   x                                  - Exit
 
 Address aliases: loc (localhost), lan (auto-LAN), custom aliases
-Use '.' for auto-generated IDs and ports"""
+Use '.' for auto-generated IDs and ports
+Persistence: {persistence_status}"""
         print(help_text)
     
     def _cmd_spawn_cluster(self, args):
@@ -375,6 +534,7 @@ Use '.' for auto-generated IDs and ports"""
             else:
                 port_display = ','.join(map(str, spawned_ports))
             print(f"Spawned cluster {cluster_id} with {len(spawned)} brokers on ports {port_display}")
+            self._save_state()  # Save state after spawning
         else:
             print("Failed to spawn cluster")
     
@@ -413,6 +573,7 @@ Use '.' for auto-generated IDs and ports"""
             self.last_cluster_id = cluster_id  # Cache for convenience commands
             join_msg = f", joining via seed brokers" if seed_brokers else ""
             print(f"Spawned broker {broker_id} in cluster {cluster_id} on {host}:{port}{join_msg}")
+            self._save_state()  # Save state after spawning
         else:
             print("Failed to spawn broker")
     
@@ -454,6 +615,7 @@ Use '.' for auto-generated IDs and ports"""
             else:
                 port_display = ','.join(map(str, spawned_ports))
             print(f"Spawned cluster {cluster_id} with {len(spawned)} brokers on loc:{port_display}")
+            self._save_state()  # Save state after spawning
         else:
             print("Failed to spawn cluster")
     
@@ -472,6 +634,7 @@ Use '.' for auto-generated IDs and ports"""
         if broker_instance:
             self.last_cluster_id = cluster_id  # Cache for convenience commands
             print(f"Spawned broker {broker_id} in cluster {cluster_id} on {args[0]}:{port}")
+            self._save_state()  # Save state after spawning
         else:
             print("Failed to spawn broker")
     
@@ -558,6 +721,7 @@ Use '.' for auto-generated IDs and ports"""
         
         del self.clusters[cluster_id]
         print(f"Killed cluster {cluster_id} ({killed_count} brokers)")
+        self._save_state()  # Save state after killing
     
     def _cmd_kill_broker(self, args):
         """Kill broker: kb <broker_id>"""
@@ -583,6 +747,7 @@ Use '.' for auto-generated IDs and ports"""
                 del self.clusters[cluster_id]
         
         print(f"Killed broker {broker_id}")
+        self._save_state()  # Save state after killing
     
     def _cmd_kill_all(self):
         """Kill all clusters: ka"""
@@ -595,6 +760,7 @@ Use '.' for auto-generated IDs and ports"""
         self.clusters.clear()
         
         print(f"Killed all clusters ({total_killed} brokers total)")
+        self._save_state()  # Save state after killing
     
     def _cmd_kill_leader(self, args):
         """Kill leader broker: kl [cluster_id]"""
@@ -645,6 +811,7 @@ Use '.' for auto-generated IDs and ports"""
                 del self.clusters[cluster_id]
         
         print(f"Killed leader broker {leader_broker_id} in cluster {cluster_id}")
+        self._save_state()  # Save state after killing
     
     def _cmd_kill_min_broker(self, args):
         """Kill broker with minimum ID: km [cluster_id]"""
@@ -682,6 +849,7 @@ Use '.' for auto-generated IDs and ports"""
                 del self.clusters[cluster_id]
         
         print(f"Killed min broker ID {min_broker_id} in cluster {cluster_id}")
+        self._save_state()  # Save state after killing
     
     def _cmd_show_topology(self, args):
         """Show cluster topology: t [cluster_id]"""
@@ -813,6 +981,23 @@ Use '.' for auto-generated IDs and ports"""
         result = self.ip_manager.remove_alias(name)
         print(result)
     
+    def _cmd_persistence_status(self):
+        """Show persistence status: ps"""
+        info = self.data_manager.get_state_info()
+        print(info)
+    
+    def _cmd_clear_persistence(self):
+        """Clear persistence data: pc"""
+        if not self.persistence_enabled:
+            print("Persistence is disabled for this session")
+            return
+        
+        success = self.data_manager.clear_state()
+        if success:
+            print("Persistence data cleared")
+        else:
+            print("Failed to clear persistence data")
+    
     def shutdown(self):
         """Shutdown spawner and clean up."""
         print("Cleaning up broker processes...")
@@ -823,13 +1008,24 @@ Use '.' for auto-generated IDs and ports"""
             except:
                 pass
         
+        # Save final state before exit
+        self._save_state()
         self._save_history()
         print("Shutdown complete")
 
 
 def main():
     """Main entry point."""
-    spawner = BrokerSpawner()
+    parser = argparse.ArgumentParser(description="Broker Spawner CLI - Interactive tool for spawning and managing broker clusters")
+    parser.add_argument('-t', '--temporary', action='store_true', 
+                       help='Disable persistence for this session (temporary mode)')
+    
+    args = parser.parse_args()
+    
+    # Initialize spawner with persistence setting
+    enable_persistence = not args.temporary
+    spawner = BrokerSpawner(enable_persistence=enable_persistence)
+    
     try:
         spawner.run()
     except KeyboardInterrupt:
