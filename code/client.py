@@ -135,8 +135,9 @@ class Client:
         
         # Seed brokers and cluster discovery
         self.seed_brokers = list(seed_brokers) if seed_brokers else []
-        self.clusters = {}  # cluster_id -> {topology, is_connected}
+        self.clusters = {}  # cluster_id -> {topology, is_connected, seed_brokers}
         self.cluster_creation_index = 0
+        self.assigned_seed_brokers = set()  # Track which seed brokers are already assigned to clusters
         
         # Background refresh
         self.shutdown_event = threading.Event()
@@ -147,6 +148,11 @@ class Client:
         new_brokers = [broker for broker in seed_brokers if broker not in self.seed_brokers]
         self.seed_brokers.extend(new_brokers)
         print(f"[Client {self.client_id}] Added {len(new_brokers)} new seed brokers")
+        
+        # Immediately try to discover clusters from new seed brokers
+        if new_brokers and self.refresh_thread is not None:  # Only if background refresh is running
+            print(f"[Client {self.client_id}] Attempting immediate discovery from new seed brokers")
+            self._discover_new_clusters_from_unassigned_brokers()
     
     def connect(self) -> bool:
         """Connect to all discoverable clusters from seed brokers."""
@@ -206,6 +212,8 @@ class Client:
             'is_connected': True,
             'seed_brokers': [broker_addr]
         }
+        # Mark this seed broker as assigned to a cluster
+        self.assigned_seed_brokers.add(broker_addr)
     
     def _update_cluster_broker(self, cluster_id: str, broker_addr: str):
         """Update existing cluster with additional broker."""
@@ -213,6 +221,8 @@ class Client:
         if cluster and broker_addr not in cluster['seed_brokers']:
             cluster['seed_brokers'].append(broker_addr)
             cluster['topology'].seed_brokers.append(broker_addr)
+            # Mark this seed broker as assigned to a cluster
+            self.assigned_seed_brokers.add(broker_addr)
     
 
     
@@ -235,12 +245,13 @@ class Client:
         self.refresh_thread.start()
     
     def _background_refresh_loop(self):
-        """Background thread for periodic topology refresh."""
+        """Background thread for periodic topology refresh and new cluster discovery."""
         while not self.shutdown_event.is_set():
             try:
                 self._refresh_all_topologies()
+                self._discover_new_clusters_from_unassigned_brokers()
             except Exception as e:
-                print(f"[Client {self.client_id}] Error in topology refresh: {e}")
+                print(f"[Client {self.client_id}] Error in topology refresh/discovery: {e}")
             
             # Wait 30 seconds between refreshes
             self.shutdown_event.wait(30.0)
@@ -280,6 +291,52 @@ class Client:
                         
                 except Exception:
                     continue  # Try next broker
+    
+    def _discover_new_clusters_from_unassigned_brokers(self):
+        """Scan unassigned seed brokers for new cluster discovery."""
+        # Find seed brokers that are not assigned to any cluster
+        unassigned_brokers = [broker for broker in self.seed_brokers 
+                            if broker not in self.assigned_seed_brokers]
+        
+        if not unassigned_brokers:
+            return  # All seed brokers are assigned
+        
+        print(f"[Client {self.client_id}] Scanning {len(unassigned_brokers)} unassigned seed brokers for new clusters")
+        
+        for broker_addr in unassigned_brokers:
+            try:
+                host, port = broker_addr.split(':')
+                port = int(port)
+                
+                # Try to connect and get cluster info
+                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                sock.settimeout(5.0)
+                sock.connect((host, port))
+                
+                request = {
+                    "operation": "CLUSTER_QUERY",
+                    "client_id": self.client_id
+                }
+                
+                response = SocketUtils.send_request(sock, request, 5.0)
+                sock.close()
+                
+                if response and response.get('cluster_id'):
+                    cluster_id = response['cluster_id']
+                    
+                    # Check if this is a new cluster or existing one
+                    if cluster_id not in self.clusters:
+                        # New cluster discovered!
+                        self._add_discovered_cluster(cluster_id, broker_addr, response)
+                        print(f"[Client {self.client_id}] Auto-discovered new cluster: {cluster_id} from broker {broker_addr}")
+                    else:
+                        # This broker belongs to an existing cluster, update it
+                        self._update_cluster_broker(cluster_id, broker_addr)
+                        print(f"[Client {self.client_id}] Found additional broker {broker_addr} for existing cluster {cluster_id}")
+                    
+            except Exception as e:
+                # Broker might be down or unreachable, skip silently in background discovery
+                continue
     
     def disconnect(self):
         """Shutdown client and stop background threads."""
