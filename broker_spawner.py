@@ -303,7 +303,7 @@ class BrokerSpawner(BaseCLI):
   ka                                 - Kill all clusters
   kl [cluster]                       - Kill leader (uses last cluster if not specified)
   km [cluster]                       - Kill min broker ID (uses last cluster if not specified)
-  t  [cluster]                       - Show topology (uses last cluster if not specified)
+  t  [cluster]                       - Show topology for all clusters, or specific cluster if provided
   q  <broker>                        - Show broker queues
   ps                                 - Show persistence status/info
   pc                                 - Clear persistence data
@@ -722,21 +722,33 @@ Persistence: {persistence_status}"""
         self._save_state()  # Save state after killing
     
     def _cmd_show_topology(self, args):
-        """Show cluster topology: t [cluster_id]"""
-        if not args:
-            if not self.last_cluster_id:
-                print("Usage: t <cluster_id> (no cached cluster available)")
-                return
-            cluster_id = self.last_cluster_id
-        else:
+        """Show topology for all clusters or specific cluster: t [cluster_id]"""
+        # If cluster_id is specified, show only that cluster
+        if args:
             cluster_id = args[0]
-        if cluster_id not in self.clusters:
-            print(f"Cluster {cluster_id} not found")
+            if cluster_id not in self.clusters:
+                print(f"Cluster {cluster_id} not found")
+                return
+            self._show_cluster_topology(cluster_id)
             return
         
+        # Show topology for all clusters
+        if not self.clusters:
+            print("No clusters available")
+            return
+        
+        print("Topology for all clusters:")
+        print()
+        
+        for cluster_id in sorted(self.clusters.keys()):
+            self._show_cluster_topology(cluster_id)
+            print()  # Empty line between clusters
+    
+    def _show_cluster_topology(self, cluster_id: str):
+        """Show topology for a specific cluster."""
         broker_ids = [bid for bid in self.clusters[cluster_id] if bid in self.brokers and self.brokers[bid].is_alive()]
         if not broker_ids:
-            print(f"No alive brokers in cluster {cluster_id}")
+            print(f"Cluster {cluster_id}: No alive brokers")
             return
         
         print(f"Cluster {cluster_id}:")
