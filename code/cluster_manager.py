@@ -144,8 +144,9 @@ class ClusterManager:
     
     def handle_broker_join(self, message: Dict) -> Dict:
         """Handle JOIN_CLUSTER request from new broker."""
+        # If we're not the leader, forward the request to the leader
         if self.role != BrokerRole.LEADER:
-            return {"status": "error", "message": "Only leader can handle join requests"}
+            return self._forward_join_to_leader(message)
         
         broker_id = message.get("broker_id")
         host = message.get("host")
@@ -201,6 +202,43 @@ class ClusterManager:
             "cluster_info": cluster_info,
             "data_snapshot": data_snapshot
         }
+    
+    def _forward_join_to_leader(self, message: Dict) -> Dict:
+        """Forward JOIN_CLUSTER request to the current leader."""
+        current_leader_id = self.get_current_leader()
+        
+        if not current_leader_id:
+            return {"status": "error", "message": "No leader available to forward join request"}
+        
+        if current_leader_id == self.broker_id:
+            return {"status": "error", "message": "Cannot forward to self - inconsistent state"}
+        
+        with self.state_lock:
+            leader_member = self.cluster_members.get(current_leader_id)
+        
+        if not leader_member:
+            return {"status": "error", "message": "Leader information not available"}
+        
+        print(f"[{self.broker_id}] Forwarding JOIN_CLUSTER request from {message.get('broker_id')} to leader {current_leader_id}")
+        
+        try:
+            # Forward the original join message to the leader
+            response = self.network_handler.send_to_broker(
+                leader_member.host, 
+                leader_member.port, 
+                message, 
+                timeout=15.0
+            )
+            
+            if response:
+                print(f"[{self.broker_id}] Successfully forwarded join request, leader response: {response.get('status')}")
+                return response
+            else:
+                return {"status": "error", "message": "Failed to get response from leader"}
+        
+        except Exception as e:
+            print(f"[{self.broker_id}] Failed to forward join request to leader: {e}")
+            return {"status": "error", "message": f"Failed to forward to leader: {str(e)}"}
     
     def _update_cluster_membership_from_info(self, cluster_info: Dict):
         """Update cluster membership from received cluster info."""
@@ -308,7 +346,7 @@ class ClusterManager:
             for broker_id, member in self.cluster_members.items():
                 if (broker_id != self.broker_id and 
                     member.status == BrokerStatus.ACTIVE and
-                    current_time - member.last_heartbeat > 15.0):
+                    current_time - member.last_heartbeat > 8.0):
                     failed_brokers.append(broker_id)
         
         if failed_brokers:
