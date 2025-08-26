@@ -15,8 +15,8 @@ import json
 
 # Add code directory to path
 sys.path.insert(0, 'code')
-from code.id_generator import generate_broker_id, generate_cluster_id
 from code.broker import Broker
+from code.id_generator import generate_broker_id, generate_cluster_id
 
 
 class IPManager:
@@ -302,7 +302,7 @@ class BrokerSpawner:
     def _cmd_help(self):
         """Display help information."""
         help_text = """Broker Spawner Commands:
-  s  <cluster> <count> [port] [seeds] - Spawn cluster
+  s  <cluster> <count> [seeds]       - Spawn cluster (auto-allocated ports)
   sb <cluster> <broker> <host> [port] [seeds] - Spawn broker
   sc [count]                         - Spawn cluster (auto ID/port)
   sn <host>                          - Spawn single broker (auto all)
@@ -324,9 +324,9 @@ Use '.' for auto-generated IDs and ports"""
         print(help_text)
     
     def _cmd_spawn_cluster(self, args):
-        """Spawn a cluster: s <cluster_id> <broker_count> [port_start] [seed_brokers]"""
+        """Spawn a cluster: s <cluster_id> <broker_count> [seed_brokers]"""
         if len(args) < 2:
-            print("Usage: s <cluster_id> <broker_count> [port_start] [seed_brokers]")
+            print("Usage: s <cluster_id> <broker_count> [seed_brokers]")
             return
         
         cluster_id = generate_cluster_id() if args[0] == '.' else args[0]
@@ -340,20 +340,10 @@ Use '.' for auto-generated IDs and ports"""
             print("Error: broker_count must be between 1 and 5")
             return
         
-        # Determine starting port
-        if len(args) > 2 and args[2] != '.':
-            try:
-                start_port = int(args[2])
-            except ValueError:
-                print("Error: port_start must be a number or '.'")
-                return
-        else:
-            start_port = self._allocate_port()
-        
         # Parse seed brokers
         seed_brokers = []
-        if len(args) > 3:
-            seed_addrs = args[3].split(',')
+        if len(args) > 2:
+            seed_addrs = args[2].split(',')
             for addr in seed_addrs:
                 if ':' in addr:
                     host_part, port_part = addr.split(':', 1)
@@ -362,14 +352,16 @@ Use '.' for auto-generated IDs and ports"""
         
         # Spawn brokers
         spawned = []
+        spawned_ports = []
         for i in range(broker_count):
             broker_id = generate_broker_id()
-            port = start_port + i
+            port = self._allocate_port()  # Use individual port allocation instead of consecutive
             host = self.ip_manager.resolve_ip('loc')  # Default to localhost
             
             broker_instance = self._create_broker_instance(broker_id, cluster_id, host, port, seed_brokers)
             if broker_instance:
                 spawned.append(f"{host}:{port}")
+                spawned_ports.append(port)
             
             # First broker becomes seed for subsequent ones
             if i == 0 and not seed_brokers:
@@ -377,8 +369,12 @@ Use '.' for auto-generated IDs and ports"""
         
         if spawned:
             self.last_cluster_id = cluster_id  # Cache for convenience commands
-            port_range = f"{start_port}-{start_port + len(spawned) - 1}" if len(spawned) > 1 else str(start_port)
-            print(f"Spawned cluster {cluster_id} with {len(spawned)} brokers on ports {port_range}")
+            # Show individual ports instead of assuming consecutive range
+            if len(spawned_ports) == 1:
+                port_display = str(spawned_ports[0])
+            else:
+                port_display = ','.join(map(str, spawned_ports))
+            print(f"Spawned cluster {cluster_id} with {len(spawned)} brokers on ports {port_display}")
         else:
             print("Failed to spawn cluster")
     
@@ -431,19 +427,20 @@ Use '.' for auto-generated IDs and ports"""
                 return
         
         cluster_id = generate_cluster_id()
-        start_port = self._allocate_port()
         host = self.ip_manager.resolve_ip('loc')
         
         spawned = []
+        spawned_ports = []
         seed_brokers = []
         
         for i in range(count):
             broker_id = generate_broker_id()
-            port = start_port + i
+            port = self._allocate_port()  # Use individual port allocation instead of consecutive
             
             broker_instance = self._create_broker_instance(broker_id, cluster_id, host, port, seed_brokers)
             if broker_instance:
                 spawned.append(f"loc:{port}")
+                spawned_ports.append(port)
             
             # First broker becomes seed
             if i == 0:
@@ -451,8 +448,12 @@ Use '.' for auto-generated IDs and ports"""
         
         if spawned:
             self.last_cluster_id = cluster_id  # Cache for convenience commands
-            port_range = f"{start_port}-{start_port + len(spawned) - 1}" if len(spawned) > 1 else str(start_port)
-            print(f"Spawned cluster {cluster_id} with {len(spawned)} brokers on loc:{port_range}")
+            # Show individual ports instead of assuming consecutive range
+            if len(spawned_ports) == 1:
+                port_display = str(spawned_ports[0])
+            else:
+                port_display = ','.join(map(str, spawned_ports))
+            print(f"Spawned cluster {cluster_id} with {len(spawned)} brokers on loc:{port_display}")
         else:
             print("Failed to spawn cluster")
     
@@ -504,12 +505,16 @@ Use '.' for auto-generated IDs and ports"""
                 else:
                     # Show port range if consecutive and same host
                     if self._is_consecutive_ports(alive_brokers):
-                        first_broker = self.brokers[alive_brokers[0]]
-                        last_broker = self.brokers[alive_brokers[-1]]
+                        # Sort brokers by port for consistent range display
+                        sorted_brokers = sorted([self.brokers[bid] for bid in alive_brokers], key=lambda b: b.port)
+                        first_broker = sorted_brokers[0]
+                        last_broker = sorted_brokers[-1]
                         host_display = broker_addrs[0].split(':')[0]
                         print(f"- {cluster_id}: {len(alive_brokers)} brokers ({host_display}:{first_broker.port}-{last_broker.port})")
                     else:
-                        print(f"- {cluster_id}: {len(alive_brokers)} brokers ({', '.join(broker_addrs)})")
+                        # Sort broker addresses by port for consistent display
+                        sorted_addrs = sorted(broker_addrs, key=lambda addr: int(addr.split(':')[1]))
+                        print(f"- {cluster_id}: {len(alive_brokers)} brokers ({', '.join(sorted_addrs)})")
     
     def _is_consecutive_ports(self, broker_ids: List[str]) -> bool:
         """Check if brokers have consecutive ports and same host."""
