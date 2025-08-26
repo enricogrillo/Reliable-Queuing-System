@@ -140,8 +140,6 @@ class Broker:
 
             elif operation == "REPLICATE":
                 return self.replication_manager.handle_replication(message)
-            elif operation == "MEMBERSHIP_UPDATE":
-                return self.replication_manager.handle_membership_update(message)
             elif operation == "DATA_SYNC_REQUEST":
                 return self.replication_manager.handle_data_sync_request(message)
             

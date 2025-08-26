@@ -208,24 +208,6 @@ class ReplicationManager:
         except Exception as e:
             return {"status": "error", "message": f"Read failed: {e}"}
     
-    def replicate_membership_update(self):
-        """Replicate membership changes to replicas."""
-        membership_data = {
-            "operation": "MEMBERSHIP_UPDATE",
-            "cluster_version": self.cluster_manager.cluster_version,
-            "members": {
-                broker_id: {
-                    "broker_id": member.broker_id,
-                    "host": member.host,
-                    "port": member.port,
-                    "role": member.role.value,
-                    "status": member.status.value
-                }
-                for broker_id, member in self.cluster_manager.cluster_members.items()
-            }
-        }
-        
-        self.replicate_to_replicas(membership_data)
     
     def handle_data_sync_request(self, message: Dict) -> Dict:
         """Handle data sync request from joining broker."""
@@ -237,8 +219,4 @@ class ReplicationManager:
             "status": "success",
             "data_snapshot": data_snapshot
         }
-    
-    def handle_membership_update(self, message: Dict) -> Dict:
-        """Handle membership update from leader."""
-        # Implementation for handling membership updates
-        return {"status": "success"}
+
