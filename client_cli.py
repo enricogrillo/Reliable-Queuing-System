@@ -208,7 +208,7 @@ class DistributedQueueCLI:
                 
                 if info and 'brokers' in info:
                     for j, broker in enumerate(info['brokers']):
-                        role = "Leader" if broker.get('is_leader', False) else "Replica"
+                        role = broker.get('role', 'unknown').capitalize()
                         status = "✓" if broker.get('is_alive', True) else "✗"
                         host = broker.get('host', 'unknown')
                         port = broker.get('port', 'unknown')
@@ -338,7 +338,7 @@ class DistributedQueueCLI:
                     broker_info = f", broker {self.client._last_used_broker}"
                 print(f"Message sent successfully{broker_info}")
             else:
-                error = response.get('error', 'Unknown error') if response else 'No response'
+                error = response.get('message', 'Unknown error') if response else 'No response'
                 print(f"Failed to send message: {error}")
                 
         except Exception as e:
@@ -370,7 +370,7 @@ class DistributedQueueCLI:
                 else:
                     print("No more messages")
             else:
-                error = response.get('error', 'Unknown error') if response else 'No response'
+                error = response.get('message', 'Unknown error') if response else 'No response'
                 if 'no more messages' in error.lower() or 'no messages' in error.lower():
                     print("No more messages")
                 else:
