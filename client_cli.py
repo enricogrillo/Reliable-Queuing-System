@@ -20,7 +20,7 @@ except ImportError:
 
 # Import from code directory
 sys.path.append('code')
-from client import Client
+from code.client import Client
 
 
 class DistributedQueueCLI:
@@ -64,9 +64,10 @@ class DistributedQueueCLI:
         
     def start(self):
         """Start the CLI interface"""
-        print("Distributed Queue CLI v1.0")
+        print("Distributed Queue CLI v1.0 - Multi-Cluster Auto-Discovery")
         print("Type 'h' or 'help' for available commands.")
         print("Use Ctrl+C to exit, or 'x' to quit.")
+        print("Auto-discovery: Client automatically scans for new clusters from seed brokers.")
         print()
         
         try:
@@ -91,6 +92,8 @@ class DistributedQueueCLI:
                         self._cmd_add_broker(args)
                     elif cmd == 't':
                         self._cmd_topology()
+                    elif cmd == 'l':
+                        self._cmd_list_clusters()
                     elif cmd == 'q':
                         self._cmd_create_queue()
                     elif cmd == 's':
@@ -139,15 +142,15 @@ class DistributedQueueCLI:
                 self.client = None
                 return
             
-            # Test connection by getting cluster info
-            info = self.client.get_cluster_info()
-            if info and 'brokers' in info:
-                leader_count = len([b for b in info['brokers'] if b.get('is_leader', False)])
-                total_brokers = len(info['brokers'])
-                cluster_id = info.get('cluster_id', 'Unknown')
-                print(f"Connected to cluster {cluster_id} ({total_brokers} brokers, {leader_count} leader{'s' if leader_count != 1 else ''})")
+            # Report on all discovered clusters
+            clusters = self.client.clusters
+            if clusters:
+                print(f"Successfully discovered {len(clusters)} cluster(s):")
+                for cluster_id in clusters.keys():
+                    print(f"  • {cluster_id}")
+                print(f"Auto-discovery enabled - will scan for new clusters every 30 seconds")
             else:
-                print("Connected to cluster")
+                print("Connected but no clusters discovered")
                 
         except Exception as e:
             print(f"Failed to connect: {e}")
@@ -167,47 +170,123 @@ class DistributedQueueCLI:
         self.brokers.append(broker_addr)
         print(f"Added broker: {broker_addr}")
         
-        # If we have a client, refresh topology
+        # If we have a client, use the new auto-discovery functionality
         if self.client:
             try:
-                # Refresh topology by getting cluster info
-                self.client.get_cluster_info()
-                print("Topology refreshed")
+                # Add to client's seed brokers and trigger auto-discovery
+                old_clusters = set(self.client.clusters.keys())
+                self.client.add_seed_brokers([broker_addr])
+                new_clusters = set(self.client.clusters.keys())
+                
+                # Report newly discovered clusters
+                discovered = new_clusters - old_clusters
+                if discovered:
+                    print(f"Discovered new clusters: {', '.join(discovered)}")
+                else:
+                    print("No new clusters discovered from this broker")
+                    
             except Exception as e:
-                print(f"Warning: Failed to refresh topology: {e}")
+                print(f"Warning: Failed to discover clusters from new broker: {e}")
     
     def _cmd_topology(self):
-        """Show connection and cluster status topology"""
+        """Show connection and cluster status topology for all discovered clusters"""
         if not self.client:
             print("Not connected. Use 'c' to connect first.")
             return
             
         try:
-            info = self.client.get_cluster_info()
-            if not info or 'brokers' not in info:
+            all_clusters_info = self.client.get_all_clusters_info()
+            if not all_clusters_info:
                 print("No cluster information available")
                 return
+            
+            print(f"Discovered {len(all_clusters_info)} cluster(s):")
+            print()
+            
+            for i, (cluster_id, info) in enumerate(all_clusters_info.items()):
+                print(f"Cluster {i+1}: {cluster_id}")
                 
-            cluster_id = info.get('cluster_id', 'Unknown') if info else 'None'
-            print(f"Cluster: {cluster_id}")
-            for broker in info['brokers']:
-                role = "Leader" if broker.get('is_leader', False) else "Replica"
-                status = "✓" if broker.get('is_alive', True) else "✗"
-                host = broker.get('host', 'unknown')
-                port = broker.get('port', 'unknown')
-                broker_id = broker.get('broker_id', 'unknown')
-                
-                if broker == info['brokers'][0]:
-                    print(f"├─ {role}: {broker_id} ({host}:{port}) {status}")
-                elif broker == info['brokers'][-1]:
-                    print(f"└─ {role}: {broker_id} ({host}:{port}) {status}")
+                if info and 'brokers' in info:
+                    for j, broker in enumerate(info['brokers']):
+                        role = "Leader" if broker.get('is_leader', False) else "Replica"
+                        status = "✓" if broker.get('is_alive', True) else "✗"
+                        host = broker.get('host', 'unknown')
+                        port = broker.get('port', 'unknown')
+                        broker_id = broker.get('broker_id', 'unknown')
+                        
+                        if j == len(info['brokers']) - 1:
+                            print(f"└─ {role}: {broker_id} ({host}:{port}) {status}")
+                        else:
+                            print(f"├─ {role}: {broker_id} ({host}:{port}) {status}")
                 else:
-                    print(f"├─ {role}: {broker_id} ({host}:{port}) {status}")
-                    
+                    print("├─ (No broker information available)")
+                
+                # Add spacing between clusters except for the last one
+                if i < len(all_clusters_info) - 1:
+                    print()
+            
+            print()
             print(f"Client: {self.client.client_id}")
+            print(f"Total seed brokers: {len(self.client.seed_brokers)}")
+            print(f"Assigned seed brokers: {len(self.client.assigned_seed_brokers)}")
+            print(f"Unassigned seed brokers: {len(self.client.seed_brokers) - len(self.client.assigned_seed_brokers)}")
             
         except Exception as e:
             print(f"Failed to get topology: {e}")
+    
+    def _cmd_list_clusters(self):
+        """List all discovered clusters with their seed brokers"""
+        if not self.client:
+            print("Not connected. Use 'c' to connect first.")
+            return
+            
+        try:
+            if not self.client.clusters:
+                print("No clusters discovered yet.")
+                return
+            
+            print(f"Discovered Clusters ({len(self.client.clusters)}):")
+            print("=" * 50)
+            
+            for cluster_id, cluster_info in self.client.clusters.items():
+                topology = cluster_info.get('topology')
+                is_connected = cluster_info.get('is_connected', False)
+                seed_brokers = cluster_info.get('seed_brokers', [])
+                
+                status = "Connected" if is_connected else "Disconnected"
+                print(f"\nCluster: {cluster_id} ({status})")
+                print(f"  Seed Brokers: {', '.join(seed_brokers)}")
+                
+                if topology and hasattr(topology, 'brokers'):
+                    leader = topology.get_leader()
+                    replicas = topology.get_replicas()
+                    
+                    if leader:
+                        print(f"  Leader: {leader.broker_id} ({leader.host}:{leader.port})")
+                    else:
+                        print(f"  Leader: None")
+                    
+                    if replicas:
+                        replica_info = [f"{r.broker_id} ({r.host}:{r.port})" for r in replicas]
+                        print(f"  Replicas: {', '.join(replica_info)}")
+                    else:
+                        print(f"  Replicas: None")
+                else:
+                    print(f"  Topology: Not available")
+            
+            print("\n" + "=" * 50)
+            print(f"Auto-Discovery Status:")
+            unassigned_count = len(self.client.seed_brokers) - len(self.client.assigned_seed_brokers)
+            print(f"  Total seed brokers: {len(self.client.seed_brokers)}")
+            print(f"  Assigned to clusters: {len(self.client.assigned_seed_brokers)}")
+            print(f"  Unassigned (will be scanned): {unassigned_count}")
+            
+            if unassigned_count > 0:
+                unassigned = [b for b in self.client.seed_brokers if b not in self.client.assigned_seed_brokers]
+                print(f"  Unassigned brokers: {', '.join(unassigned)}")
+            
+        except Exception as e:
+            print(f"Failed to list clusters: {e}")
     
     def _cmd_create_queue(self):
         """Create a new queue"""
@@ -303,16 +382,28 @@ class DistributedQueueCLI:
     def _cmd_help(self):
         """Show available commands"""
         print("Available commands:")
-        print("  c              - Connect to the broker cluster")
-        print("  b <host:port>  - Add new broker to establish new cluster connection")
-        print("  t              - Show connection and cluster status topology")
+        print()
+        print("Connection & Discovery:")
+        print("  c              - Connect to seed brokers and discover clusters")
+        print("  b <host:port>  - Add new seed broker (triggers auto-discovery)")
+        print("  t              - Show topology for all discovered clusters")
+        print("  l              - List all discovered clusters with details")
+        print()
+        print("Queue Operations:")
         print("  q              - Create a new queue (auto-generated ID, cached)")
         print("  s <queue_id> <message> - Send message to specific queue")
         print("  s <message>    - Send message to cached queue_id")
         print("  r <queue_id>   - Read from specific queue")
         print("  r              - Read from cached queue_id")
+        print()
+        print("Utility:")
         print("  h, help        - Show this help")
         print("  x, quit, exit  - Exit the CLI")
+        print()
+        print("Auto-Discovery:")
+        print("  • Client automatically scans unassigned seed brokers every 30s")
+        print("  • New clusters are discovered automatically when brokers are added")
+        print("  • Use 'l' command to see auto-discovery status")
         print()
         print("Navigation:")
         print("  ↑ / ↓          - Browse command history")
@@ -324,10 +415,11 @@ class DistributedQueueCLI:
         """Exit the CLI"""
         if self.client:
             try:
-                # Close any connections if the client has such a method
-                pass
-            except:
-                pass
+                # Properly disconnect the client to stop background threads
+                self.client.disconnect()
+            except Exception as e:
+                # Don't fail exit due to cleanup issues
+                print(f"Warning: Error during cleanup: {e}")
         
         # Save history before exiting
         self._save_history()
