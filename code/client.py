@@ -158,48 +158,21 @@ class Client:
         """Connect to all discoverable clusters from seed brokers."""
         print(f"[Client {self.client_id}] Discovering clusters from {len(self.seed_brokers)} seed brokers")
         
-        discovered_clusters = 0
-        for broker_addr in self.seed_brokers:
-            try:
-                host, port = broker_addr.split(':')
-                port = int(port)
-                
-                # Try to connect and get cluster info
-                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                sock.settimeout(5.0)
-                sock.connect((host, port))
-                
-                request = {
-                    "operation": "CLUSTER_QUERY",
-                    "client_id": self.client_id
-                }
-                
-                response = SocketUtils.send_request(sock, request, 5.0)
-                sock.close()
-                
-                if response and response.get('cluster_id'):
-                    cluster_id = response['cluster_id']
-                    
-                    # Add cluster if not already known
-                    if cluster_id not in self.clusters:
-                        self._add_discovered_cluster(cluster_id, broker_addr, response)
-                        discovered_clusters += 1
-                        print(f"[Client {self.client_id}] Discovered new cluster: {cluster_id}")
-                    else:
-                        # Update existing cluster with this broker
-                        self._update_cluster_broker(cluster_id, broker_addr)
-                    
-            except Exception as e:
-                print(f"[Client {self.client_id}] Failed to connect to {broker_addr}: {e}")
-                continue
+        # Use the unified discovery method to scan all seed brokers
+        clusters_before = len(self.clusters)
+        self._discover_new_clusters_from_unassigned_brokers()
+        clusters_after = len(self.clusters)
+        
+        discovered_clusters = clusters_after - clusters_before
         
         if discovered_clusters > 0:
             print(f"[Client {self.client_id}] Successfully discovered {discovered_clusters} clusters")
-            self._start_background_refresh()
-            return True
         else:
-            print(f"[Client {self.client_id}] No clusters discovered")
-            return False
+            print(f"[Client {self.client_id}] No clusters discovered initially - will continue scanning in background")
+        
+        # Always start background refresh for auto-discovery, regardless of initial discovery results
+        self._start_background_refresh()
+        return True
     
     def _add_discovered_cluster(self, cluster_id: str, broker_addr: str, response: Dict[str, Any]):
         """Add a newly discovered cluster."""

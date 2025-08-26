@@ -137,20 +137,18 @@ class DistributedQueueCLI:
                 client_id=self.client_id
             )
             connected = self.client.connect()
-            if not connected:
-                print("Failed to connect to any cluster. Please check your broker addresses.")
-                self.client = None
-                return
             
-            # Report on all discovered clusters
+            # connect() now always returns True and starts auto-discovery
+            # Report on discovered clusters
             clusters = self.client.clusters
             if clusters:
                 print(f"Successfully discovered {len(clusters)} cluster(s):")
                 for cluster_id in clusters.keys():
                     print(f"  • {cluster_id}")
-                print(f"Auto-discovery enabled - will scan for new clusters every 30 seconds")
             else:
-                print("Connected but no clusters discovered")
+                print("No clusters discovered initially - they will be found automatically when available")
+            
+            print(f"Auto-discovery enabled - will scan for new clusters every 30 seconds")
                 
         except Exception as e:
             print(f"Failed to connect: {e}")
