@@ -6,6 +6,7 @@ Interactive CLI for the Distributed Queuing Platform
 import argparse
 import sys
 import traceback
+import socket
 from typing import Optional, List
 
 # Enable command history and line editing
@@ -23,9 +24,72 @@ sys.path.append('code')
 from code.client import Client
 
 
+class IPManager:
+    """Manages IP address aliases and discovery."""
+    
+    def __init__(self):
+        self.aliases = {
+            'loc': '127.0.0.1',
+            'lan': self._discover_lan_ip()
+        }
+        self.custom_aliases = {}
+    
+    def _discover_lan_ip(self) -> str:
+        """Auto-discover LAN IP address."""
+        try:
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            s.connect(("8.8.8.8", 80))
+            ip = s.getsockname()[0]
+            s.close()
+            return ip
+        except:
+            return "127.0.0.1"
+    
+    def refresh_lan_ip(self) -> str:
+        """Refresh and update LAN IP discovery."""
+        old_ip = self.aliases['lan']
+        new_ip = self._discover_lan_ip()
+        self.aliases['lan'] = new_ip
+        return f"Refreshed LAN IP: {new_ip}" + (f" (changed from {old_ip})" if old_ip != new_ip else "")
+    
+    def add_alias(self, name: str, ip: str) -> str:
+        """Add or update custom IP alias."""
+        if name in ['loc', 'lan']:
+            return f"Cannot override built-in alias '{name}'"
+        self.custom_aliases[name] = ip
+        return f"Added alias '{name}' -> {ip}"
+    
+    def remove_alias(self, name: str) -> str:
+        """Remove custom IP alias."""
+        if name in ['loc', 'lan']:
+            return f"Cannot remove built-in alias '{name}'"
+        if name in self.custom_aliases:
+            ip = self.custom_aliases.pop(name)
+            return f"Removed alias '{name}'"
+        return f"Alias '{name}' not found"
+    
+    def resolve_ip(self, addr: str) -> str:
+        """Resolve alias to IP address."""
+        if addr in self.aliases:
+            return self.aliases[addr]
+        if addr in self.custom_aliases:
+            return self.custom_aliases[addr]
+        return addr  # Return as-is if not an alias
+    
+    def show_mappings(self) -> str:
+        """Show all IP mappings."""
+        lines = ["IP mappings:"]
+        lines.append(f"- loc: {self.aliases['loc']} (localhost)")
+        lines.append(f"- lan: {self.aliases['lan']} (auto-discovered)")
+        for name, ip in self.custom_aliases.items():
+            lines.append(f"- {name}: {ip} (custom)")
+        return "\n".join(lines)
+
+
 class DistributedQueueCLI:
     def __init__(self, brokers: List[str], client_id: Optional[str] = None):
-        self.brokers = brokers
+        self.ip_manager = IPManager()
+        self.brokers = self._resolve_broker_aliases(brokers)
         self.client = None
         self.cluster_id = None
         self.cached_queue_id = None
@@ -34,6 +98,18 @@ class DistributedQueueCLI:
         
         # Load command history if readline is available
         self._load_history()
+    
+    def _resolve_broker_aliases(self, brokers: List[str]) -> List[str]:
+        """Resolve any IP aliases in broker addresses."""
+        resolved = []
+        for broker in brokers:
+            if ':' in broker:
+                host, port = broker.split(':', 1)
+                resolved_host = self.ip_manager.resolve_ip(host)
+                resolved.append(f"{resolved_host}:{port}")
+            else:
+                resolved.append(broker)
+        return resolved
         
     def _load_history(self):
         """Load command history from file."""
@@ -100,6 +176,14 @@ class DistributedQueueCLI:
                         self._cmd_send(args)
                     elif cmd == 'r':
                         self._cmd_read(args)
+                    elif cmd == 'ip':
+                        self._cmd_show_ip()
+                    elif cmd == 'fi':
+                        self._cmd_refresh_ip()
+                    elif cmd == 'a':
+                        self._cmd_add_alias(args)
+                    elif cmd == 'ua':
+                        self._cmd_remove_alias(args)
                     else:
                         print(f"Unknown command: {cmd}. Type 'h' for help.")
                         
@@ -157,23 +241,31 @@ class DistributedQueueCLI:
     def _cmd_add_broker(self, args):
         """Add new broker to establish new cluster connection"""
         if not args:
-            print("Usage: b host:port")
+            print("Usage: b host:port (supports loc/lan aliases)")
             return
             
         broker_addr = args[0]
         if ':' not in broker_addr:
             print("Invalid broker format. Use host:port")
             return
-            
-        self.brokers.append(broker_addr)
-        print(f"Added broker: {broker_addr}")
+        
+        # Resolve any IP aliases
+        host, port = broker_addr.split(':', 1)
+        resolved_host = self.ip_manager.resolve_ip(host)
+        resolved_broker = f"{resolved_host}:{port}"
+        
+        self.brokers.append(resolved_broker)
+        if broker_addr != resolved_broker:
+            print(f"Added broker: {broker_addr} -> {resolved_broker}")
+        else:
+            print(f"Added broker: {broker_addr}")
         
         # If we have a client, use the new auto-discovery functionality
         if self.client:
             try:
                 # Add to client's seed brokers and trigger auto-discovery
                 old_clusters = set(self.client.clusters.keys())
-                self.client.add_seed_brokers([broker_addr])
+                self.client.add_seed_brokers([resolved_broker])
                 new_clusters = set(self.client.clusters.keys())
                 
                 # Report newly discovered clusters
@@ -394,9 +486,21 @@ class DistributedQueueCLI:
         print("  r <queue_id>   - Read from specific queue")
         print("  r              - Read from cached queue_id")
         print()
+        print("IP Address Management:")
+        print("  ip             - Show IP mappings (loc, lan, custom aliases)")
+        print("  fi             - Refresh LAN IP discovery")
+        print("  a <name> <ip>  - Add custom IP alias")
+        print("  ua <name>      - Remove custom IP alias")
+        print()
         print("Utility:")
         print("  h, help        - Show this help")
         print("  x, quit, exit  - Exit the CLI")
+        print()
+        print("Address Aliases:")
+        print("  • loc          - localhost (127.0.0.1)")
+        print("  • lan          - auto-discovered LAN IP")
+        print("  • Custom aliases can be added with 'a' command")
+        print("  • Use in broker addresses: loc:9001, lan:9002")
         print()
         print("Auto-Discovery:")
         print("  • Client automatically scans unassigned seed brokers every 30s")
@@ -408,6 +512,35 @@ class DistributedQueueCLI:
         print("  Ctrl+C         - Exit the CLI")
         print("  Ctrl+D         - Exit the CLI (EOF)")
         print("  Tab            - Command completion (if supported)")
+    
+    def _cmd_show_ip(self):
+        """Show IP mappings: ip"""
+        print(self.ip_manager.show_mappings())
+    
+    def _cmd_refresh_ip(self):
+        """Refresh LAN IP: fi"""
+        result = self.ip_manager.refresh_lan_ip()
+        print(result)
+    
+    def _cmd_add_alias(self, args):
+        """Add IP alias: a <name> <ip>"""
+        if len(args) != 2:
+            print("Usage: a <name> <ip>")
+            return
+        
+        name, ip = args
+        result = self.ip_manager.add_alias(name, ip)
+        print(result)
+    
+    def _cmd_remove_alias(self, args):
+        """Remove IP alias: ua <name>"""
+        if not args:
+            print("Usage: ua <name>")
+            return
+        
+        name = args[0]
+        result = self.ip_manager.remove_alias(name)
+        print(result)
     
     def _cmd_exit(self):
         """Exit the CLI"""
@@ -434,8 +567,8 @@ def parse_brokers(broker_string: str) -> List[str]:
 def main():
     parser = argparse.ArgumentParser(description='Distributed Queue CLI')
     parser.add_argument('-b', '--brokers', 
-                       default='localhost:9001,localhost:9002,localhost:9003',
-                       help='Comma-separated list of broker addresses (host:port)')
+                       default='loc:9001,loc:9002,loc:9003',
+                       help='Comma-separated list of broker addresses (host:port, supports loc/lan aliases)')
     parser.add_argument('-n', '--client-id', 
                        help='Client ID (auto-generated if not provided)')
     parser.add_argument('--debug', action='store_true',
