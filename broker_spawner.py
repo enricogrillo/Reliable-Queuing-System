@@ -9,7 +9,6 @@ import sys
 import socket
 import threading
 import time
-import readline
 import argparse
 from typing import Dict, List, Optional, Tuple
 import json
@@ -18,69 +17,8 @@ import json
 sys.path.insert(0, 'code')
 from code.broker import Broker
 from code.id_generator import generate_broker_id, generate_cluster_id
+from code.common_cli import BaseCLI
 from broker_spawner_data_manager import BrokerSpawnerDataManager
-
-
-class IPManager:
-    """Manages IP address aliases and discovery."""
-    
-    def __init__(self):
-        self.aliases = {
-            'loc': '127.0.0.1',
-            'lan': self._discover_lan_ip()
-        }
-        self.custom_aliases = {}
-    
-    def _discover_lan_ip(self) -> str:
-        """Auto-discover LAN IP address."""
-        try:
-            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            s.connect(("8.8.8.8", 80))
-            ip = s.getsockname()[0]
-            s.close()
-            return ip
-        except:
-            return "127.0.0.1"
-    
-    def refresh_lan_ip(self) -> str:
-        """Refresh and update LAN IP discovery."""
-        old_ip = self.aliases['lan']
-        new_ip = self._discover_lan_ip()
-        self.aliases['lan'] = new_ip
-        return f"Refreshed LAN IP: {new_ip}" + (f" (changed from {old_ip})" if old_ip != new_ip else "")
-    
-    def add_alias(self, name: str, ip: str) -> str:
-        """Add or update custom IP alias."""
-        if name in ['loc', 'lan']:
-            return f"Cannot override built-in alias '{name}'"
-        self.custom_aliases[name] = ip
-        return f"Added alias '{name}' -> {ip}"
-    
-    def remove_alias(self, name: str) -> str:
-        """Remove custom IP alias."""
-        if name in ['loc', 'lan']:
-            return f"Cannot remove built-in alias '{name}'"
-        if name in self.custom_aliases:
-            ip = self.custom_aliases.pop(name)
-            return f"Removed alias '{name}'"
-        return f"Alias '{name}' not found"
-    
-    def resolve_ip(self, addr: str) -> str:
-        """Resolve alias to IP address."""
-        if addr in self.aliases:
-            return self.aliases[addr]
-        if addr in self.custom_aliases:
-            return self.custom_aliases[addr]
-        return addr  # Return as-is if not an alias
-    
-    def show_mappings(self) -> str:
-        """Show all IP mappings."""
-        lines = ["IP mappings:"]
-        lines.append(f"- loc: {self.aliases['loc']} (localhost)")
-        lines.append(f"- lan: {self.aliases['lan']} (auto-discovered)")
-        for name, ip in self.custom_aliases.items():
-            lines.append(f"- {name}: {ip} (custom)")
-        return "\n".join(lines)
 
 
 class BrokerInstance:
@@ -137,24 +75,19 @@ class BrokerInstance:
             self.thread.join(timeout=2.0)
 
 
-class BrokerSpawner:
+class BrokerSpawner(BaseCLI):
     """Main broker spawner CLI application."""
     
     def __init__(self, enable_persistence: bool = True):
-        self.ip_manager = IPManager()
+        super().__init__(".broker_spawner_history")
         self.brokers: Dict[str, BrokerInstance] = {}  # broker_id -> BrokerInstance
         self.clusters: Dict[str, List[str]] = {}      # cluster_id -> [broker_ids]
         self.next_port = 9001
-        self.history_file = os.path.expanduser("~/.broker_spawner_history")
-        self.running = True
         self.last_cluster_id = None  # Cache last cluster ID for convenience commands
         
         # Initialize data manager for persistence
         self.data_manager = BrokerSpawnerDataManager(enabled=enable_persistence)
         self.persistence_enabled = enable_persistence
-        
-        # Setup readline
-        self._setup_readline()
         
         # Load previous state if available
         self._load_state()
@@ -162,33 +95,7 @@ class BrokerSpawner:
         # Auto-start default cluster if no brokers are running
         self._auto_start_cluster()
     
-    def _setup_readline(self):
-        """Setup readline for command history and completion."""
-        try:
-            readline.read_history_file(self.history_file)
-        except FileNotFoundError:
-            pass
-        
-        # Set history length
-        readline.set_history_length(1000)
-        
-        # Basic tab completion
-        commands = ['h', 's', 'sb', 'sc', 'sn', 'l', 'k', 'kb', 'ka', 'kl', 'km', 't', 'q', 'ip', 'fi', 'a', 'ua', 'ps', 'pc', 'x']
-        def completer(text, state):
-            options = [cmd for cmd in commands if cmd.startswith(text)]
-            if state < len(options):
-                return options[state]
-            return None
-        
-        readline.set_completer(completer)
-        readline.parse_and_bind("tab: complete")
-    
-    def _save_history(self):
-        """Save command history to file."""
-        try:
-            readline.write_history_file(self.history_file)
-        except:
-            pass
+
     
     def _load_state(self):
         """Load previous spawner state if available."""
@@ -375,89 +282,17 @@ class BrokerSpawner:
             print(f"Failed to create broker {broker_id}: {e}")
             return None
     
-    def run(self):
-        """Main CLI loop."""
-        print("Broker Spawner CLI")
-        print("Type 'h' for help, 'x' to exit")
-        print()
-        
-        try:
-            while self.running:
-                try:
-                    command = input("> ").strip()
-                    if command:
-                        self._process_command(command)
-                except EOFError:
-                    # Ctrl+D
-                    print("\nGoodbye!")
-                    break
-                except KeyboardInterrupt:
-                    # Ctrl+C
-                    print("\nGoodbye!")
-                    break
-        finally:
-            self.shutdown()
+
     
-    def _process_command(self, command: str):
-        """Process a single command."""
-        parts = command.split()
-        if not parts:
-            return
-        
-        cmd = parts[0].lower()
-        args = parts[1:]
-        
-        try:
-            if cmd in ['h', 'help']:
-                self._cmd_help()
-            elif cmd == 's':
-                self._cmd_spawn_cluster(args)
-            elif cmd == 'sb':
-                self._cmd_spawn_broker(args)
-            elif cmd == 'sc':
-                self._cmd_spawn_cluster_quick(args)
-            elif cmd == 'sn':
-                self._cmd_spawn_single_broker(args)
-            elif cmd == 'l':
-                self._cmd_list_clusters()
-            elif cmd == 'k':
-                self._cmd_kill_cluster(args)
-            elif cmd == 'kb':
-                self._cmd_kill_broker(args)
-            elif cmd == 'ka':
-                self._cmd_kill_all()
-            elif cmd == 'kl':
-                self._cmd_kill_leader(args)
-            elif cmd == 'km':
-                self._cmd_kill_min_broker(args)
-            elif cmd == 't':
-                self._cmd_show_topology(args)
-            elif cmd == 'q':
-                self._cmd_show_queues(args)
-            elif cmd == 'ip':
-                self._cmd_show_ip()
-            elif cmd == 'fi':
-                self._cmd_refresh_ip()
-            elif cmd == 'a':
-                self._cmd_add_alias(args)
-            elif cmd == 'ua':
-                self._cmd_remove_alias(args)
-            elif cmd == 'ps':
-                self._cmd_persistence_status()
-            elif cmd == 'pc':
-                self._cmd_clear_persistence()
-            elif cmd in ['x', 'exit', 'quit']:
-                print("Goodbye!")
-                self.running = False
-            else:
-                print(f"Unknown command: {cmd}. Type 'h' for help.")
-        except Exception as e:
-            print(f"Error: {e}")
+    # Implement abstract methods from BaseCLI
+    def get_app_banner(self) -> str:
+        """Return the application banner/title."""
+        return "Broker Spawner CLI"
     
-    def _cmd_help(self):
-        """Display help information."""
+    def get_help_text(self) -> str:
+        """Return application-specific help text."""
         persistence_status = "enabled" if self.persistence_enabled else "disabled"
-        help_text = f"""Broker Spawner Commands:
+        return f"""Broker Spawner Commands:
   s  <cluster> <count> [seeds]       - Spawn cluster (auto-allocated ports)
   sb <cluster> <broker> <host> [port] [seeds] - Spawn broker
   sc [count]                         - Spawn cluster (auto ID/port)
@@ -470,17 +305,52 @@ class BrokerSpawner:
   km [cluster]                       - Kill min broker ID (uses last cluster if not specified)
   t  [cluster]                       - Show topology (uses last cluster if not specified)
   q  <broker>                        - Show broker queues
-  ip                                 - Show IP mappings
-  a  <name> <ip>                     - Add IP alias
-  ua <name>                          - Remove IP alias
   ps                                 - Show persistence status/info
   pc                                 - Clear persistence data
-  x                                  - Exit
 
 Address aliases: loc (localhost), lan (auto-LAN), custom aliases
 Use '.' for auto-generated IDs and ports
 Persistence: {persistence_status}"""
-        print(help_text)
+    
+    def get_command_list(self) -> list:
+        """Return list of application-specific commands for tab completion."""
+        return ['s', 'sb', 'sc', 'sn', 'l', 'k', 'kb', 'ka', 'kl', 'km', 't', 'q', 'ps', 'pc']
+    
+    def handle_app_command(self, cmd: str, args: list) -> bool:
+        """Handle application-specific commands. Return True if handled, False if unknown."""
+        if cmd == 's':
+            self._cmd_spawn_cluster(args)
+        elif cmd == 'sb':
+            self._cmd_spawn_broker(args)
+        elif cmd == 'sc':
+            self._cmd_spawn_cluster_quick(args)
+        elif cmd == 'sn':
+            self._cmd_spawn_single_broker(args)
+        elif cmd == 'l':
+            self._cmd_list_clusters()
+        elif cmd == 'k':
+            self._cmd_kill_cluster(args)
+        elif cmd == 'kb':
+            self._cmd_kill_broker(args)
+        elif cmd == 'ka':
+            self._cmd_kill_all()
+        elif cmd == 'kl':
+            self._cmd_kill_leader(args)
+        elif cmd == 'km':
+            self._cmd_kill_min_broker(args)
+        elif cmd == 't':
+            self._cmd_show_topology(args)
+        elif cmd == 'q':
+            self._cmd_show_queues(args)
+        elif cmd == 'ps':
+            self._cmd_persistence_status()
+        elif cmd == 'pc':
+            self._cmd_clear_persistence()
+        else:
+            return False  # Unknown command
+        return True  # Command was handled
+    
+
     
     def _cmd_spawn_cluster(self, args):
         """Spawn a cluster: s <cluster_id> <broker_count> [seed_brokers]"""
@@ -952,34 +822,7 @@ Persistence: {persistence_status}"""
         except Exception as e:
             print(f"Failed to get queue information from broker {broker_id}: {e}")
     
-    def _cmd_show_ip(self):
-        """Show IP mappings: ip"""
-        print(self.ip_manager.show_mappings())
-    
-    def _cmd_refresh_ip(self):
-        """Refresh LAN IP: fi"""
-        result = self.ip_manager.refresh_lan_ip()
-        print(result)
-    
-    def _cmd_add_alias(self, args):
-        """Add IP alias: a <name> <ip>"""
-        if len(args) != 2:
-            print("Usage: a <name> <ip>")
-            return
-        
-        name, ip = args
-        result = self.ip_manager.add_alias(name, ip)
-        print(result)
-    
-    def _cmd_remove_alias(self, args):
-        """Remove IP alias: ua <name>"""
-        if not args:
-            print("Usage: ua <name>")
-            return
-        
-        name = args[0]
-        result = self.ip_manager.remove_alias(name)
-        print(result)
+
     
     def _cmd_persistence_status(self):
         """Show persistence status: ps"""
@@ -998,8 +841,8 @@ Persistence: {persistence_status}"""
         else:
             print("Failed to clear persistence data")
     
-    def shutdown(self):
-        """Shutdown spawner and clean up."""
+    def handle_cleanup(self):
+        """Handle application-specific cleanup."""
         print("Cleaning up broker processes...")
         
         for broker in self.brokers.values():
@@ -1010,7 +853,6 @@ Persistence: {persistence_status}"""
         
         # Save final state before exit
         self._save_state()
-        self._save_history()
         print("Shutdown complete")
 
 
@@ -1026,10 +868,7 @@ def main():
     enable_persistence = not args.temporary
     spawner = BrokerSpawner(enable_persistence=enable_persistence)
     
-    try:
-        spawner.run()
-    except KeyboardInterrupt:
-        spawner.shutdown()
+    spawner.run()
 
 
 if __name__ == "__main__":

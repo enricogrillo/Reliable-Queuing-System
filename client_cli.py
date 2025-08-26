@@ -6,98 +6,22 @@ Interactive CLI for the Distributed Queuing Platform
 import argparse
 import sys
 import traceback
-import socket
 from typing import Optional, List
-
-# Enable command history and line editing
-try:
-    import readline
-    # Set up command history
-    readline.parse_and_bind("tab: complete")
-    readline.parse_and_bind("set editing-mode emacs")
-except ImportError:
-    # readline not available on some platforms (like Windows)
-    readline = None
 
 # Import from code directory
 sys.path.append('code')
 from code.client import Client
+from code.common_cli import BaseCLI
 
 
-class IPManager:
-    """Manages IP address aliases and discovery."""
-    
-    def __init__(self):
-        self.aliases = {
-            'loc': '127.0.0.1',
-            'lan': self._discover_lan_ip()
-        }
-        self.custom_aliases = {}
-    
-    def _discover_lan_ip(self) -> str:
-        """Auto-discover LAN IP address."""
-        try:
-            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            s.connect(("8.8.8.8", 80))
-            ip = s.getsockname()[0]
-            s.close()
-            return ip
-        except:
-            return "127.0.0.1"
-    
-    def refresh_lan_ip(self) -> str:
-        """Refresh and update LAN IP discovery."""
-        old_ip = self.aliases['lan']
-        new_ip = self._discover_lan_ip()
-        self.aliases['lan'] = new_ip
-        return f"Refreshed LAN IP: {new_ip}" + (f" (changed from {old_ip})" if old_ip != new_ip else "")
-    
-    def add_alias(self, name: str, ip: str) -> str:
-        """Add or update custom IP alias."""
-        if name in ['loc', 'lan']:
-            return f"Cannot override built-in alias '{name}'"
-        self.custom_aliases[name] = ip
-        return f"Added alias '{name}' -> {ip}"
-    
-    def remove_alias(self, name: str) -> str:
-        """Remove custom IP alias."""
-        if name in ['loc', 'lan']:
-            return f"Cannot remove built-in alias '{name}'"
-        if name in self.custom_aliases:
-            ip = self.custom_aliases.pop(name)
-            return f"Removed alias '{name}'"
-        return f"Alias '{name}' not found"
-    
-    def resolve_ip(self, addr: str) -> str:
-        """Resolve alias to IP address."""
-        if addr in self.aliases:
-            return self.aliases[addr]
-        if addr in self.custom_aliases:
-            return self.custom_aliases[addr]
-        return addr  # Return as-is if not an alias
-    
-    def show_mappings(self) -> str:
-        """Show all IP mappings."""
-        lines = ["IP mappings:"]
-        lines.append(f"- loc: {self.aliases['loc']} (localhost)")
-        lines.append(f"- lan: {self.aliases['lan']} (auto-discovered)")
-        for name, ip in self.custom_aliases.items():
-            lines.append(f"- {name}: {ip} (custom)")
-        return "\n".join(lines)
-
-
-class DistributedQueueCLI:
+class DistributedQueueCLI(BaseCLI):
     def __init__(self, brokers: List[str], client_id: Optional[str] = None):
-        self.ip_manager = IPManager()
+        super().__init__(".queue_cli_history")
         self.brokers = self._resolve_broker_aliases(brokers)
         self.client = None
         self.cluster_id = None
         self.cached_queue_id = None
         self.client_id = client_id
-        self.history_file = ".queue_cli_history"
-        
-        # Load command history if readline is available
-        self._load_history()
     
     def _resolve_broker_aliases(self, brokers: List[str]) -> List[str]:
         """Resolve any IP aliases in broker addresses."""
@@ -110,103 +34,76 @@ class DistributedQueueCLI:
             else:
                 resolved.append(broker)
         return resolved
+
         
-    def _load_history(self):
-        """Load command history from file."""
-        if readline is None:
-            return
-            
-        try:
-            readline.read_history_file(self.history_file)
-        except FileNotFoundError:
-            # No history file yet, that's fine
-            pass
-        except Exception as e:
-            # Don't fail startup due to history issues
-            pass
+    # Implement abstract methods from BaseCLI
+    def get_app_banner(self) -> str:
+        """Return the application banner/title."""
+        return """Distributed Queue CLI v1.0 - Multi-Cluster Auto-Discovery
+Auto-discovery: Client automatically scans for new clusters from seed brokers."""
     
-    def _save_history(self):
-        """Save command history to file."""
-        if readline is None:
-            return
-            
-        try:
-            # Limit history to last 500 commands
-            readline.set_history_length(500)
-            readline.write_history_file(self.history_file)
-        except Exception as e:
-            # Don't fail due to history saving issues
-            pass
-        
-    def start(self):
-        """Start the CLI interface"""
-        print("Distributed Queue CLI v1.0 - Multi-Cluster Auto-Discovery")
-        print("Type 'h' or 'help' for available commands.")
-        print("Use Ctrl+C to exit, or 'x' to quit.")
-        print("Auto-discovery: Client automatically scans for new clusters from seed brokers.")
-        print()
-        
-        try:
-            while True:
-                try:
-                    command = input("> ").strip()
-                    if not command:
-                        continue
-                        
-                    parts = command.split()
-                    cmd = parts[0].lower()
-                    args = parts[1:] if len(parts) > 1 else []
-                    
-                    if cmd in ['x', 'quit', 'exit']:
-                        self._cmd_exit()
-                        break
-                    elif cmd in ['h', 'help']:
-                        self._cmd_help()
-                    elif cmd == 'c':
-                        self._cmd_connect()
-                    elif cmd == 'b':
-                        self._cmd_add_broker(args)
-                    elif cmd == 't':
-                        self._cmd_topology()
-                    elif cmd == 'l':
-                        self._cmd_list_clusters()
-                    elif cmd == 'q':
-                        self._cmd_create_queue()
-                    elif cmd == 's':
-                        self._cmd_send(args)
-                    elif cmd == 'r':
-                        self._cmd_read(args)
-                    elif cmd == 'ip':
-                        self._cmd_show_ip()
-                    elif cmd == 'fi':
-                        self._cmd_refresh_ip()
-                    elif cmd == 'a':
-                        self._cmd_add_alias(args)
-                    elif cmd == 'ua':
-                        self._cmd_remove_alias(args)
-                    else:
-                        print(f"Unknown command: {cmd}. Type 'h' for help.")
-                        
-                except EOFError:
-                    # Handle Ctrl+D
-                    print("\nGoodbye!")
-                    break
-                except Exception as e:
-                    print(f"Error: {e}")
-                    if "--debug" in sys.argv:
-                        traceback.print_exc()
-                        
-        except KeyboardInterrupt:
-            # Handle Ctrl+C
-            print("\n\nExiting...")
-            self._cmd_exit()
-        except Exception as e:
-            print(f"Fatal error: {e}")
-            if "--debug" in sys.argv:
-                traceback.print_exc()
-        finally:
-            # Save command history on exit
-            self._save_history()
+    def get_help_text(self) -> str:
+        """Return application-specific help text."""
+        return """Available commands:
+
+Connection & Discovery:
+  c              - Connect to seed brokers and discover clusters
+  b <host:port>  - Add new seed broker (triggers auto-discovery)
+  t              - Show topology for all discovered clusters
+  l              - List all discovered clusters with details
+
+Queue Operations:
+  q              - Create a new queue (auto-generated ID, cached)
+  s <queue_id> <message> - Send message to specific queue
+  s <message>    - Send message to cached queue_id
+  r <queue_id>   - Read from specific queue
+  r              - Read from cached queue_id
+
+Auto-Discovery:
+  • Client automatically scans unassigned seed brokers every 30s
+  • New clusters are discovered automatically when brokers are added
+  • Use 'l' command to see auto-discovery status
+
+Navigation:
+  ↑ / ↓          - Browse command history
+  Ctrl+C         - Exit the CLI
+  Ctrl+D         - Exit the CLI (EOF)
+  Tab            - Command completion (if supported)"""
+    
+    def get_command_list(self) -> list:
+        """Return list of application-specific commands for tab completion."""
+        return ['c', 'b', 't', 'l', 'q', 's', 'r']
+    
+    def handle_app_command(self, cmd: str, args: list) -> bool:
+        """Handle application-specific commands. Return True if handled, False if unknown."""
+        if cmd == 'c':
+            self._cmd_connect()
+        elif cmd == 'b':
+            self._cmd_add_broker(args)
+        elif cmd == 't':
+            self._cmd_topology()
+        elif cmd == 'l':
+            self._cmd_list_clusters()
+        elif cmd == 'q':
+            self._cmd_create_queue()
+        elif cmd == 's':
+            self._cmd_send(args)
+        elif cmd == 'r':
+            self._cmd_read(args)
+        else:
+            return False  # Unknown command
+        return True  # Command was handled
+    
+    def handle_cleanup(self):
+        """Handle application-specific cleanup."""
+        if self.client:
+            try:
+                # Properly disconnect the client to stop background threads
+                self.client.disconnect()
+            except Exception as e:
+                # Don't fail exit due to cleanup issues
+                print(f"Warning: Error during cleanup: {e}")
+        print("Goodbye!")
     
     def _cmd_connect(self):
         """Connect to the broker cluster"""
@@ -469,92 +366,9 @@ class DistributedQueueCLI:
         except Exception as e:
             print(f"Failed to read message: {e}")
     
-    def _cmd_help(self):
-        """Show available commands"""
-        print("Available commands:")
-        print()
-        print("Connection & Discovery:")
-        print("  c              - Connect to seed brokers and discover clusters")
-        print("  b <host:port>  - Add new seed broker (triggers auto-discovery)")
-        print("  t              - Show topology for all discovered clusters")
-        print("  l              - List all discovered clusters with details")
-        print()
-        print("Queue Operations:")
-        print("  q              - Create a new queue (auto-generated ID, cached)")
-        print("  s <queue_id> <message> - Send message to specific queue")
-        print("  s <message>    - Send message to cached queue_id")
-        print("  r <queue_id>   - Read from specific queue")
-        print("  r              - Read from cached queue_id")
-        print()
-        print("IP Address Management:")
-        print("  ip             - Show IP mappings (loc, lan, custom aliases)")
-        print("  fi             - Refresh LAN IP discovery")
-        print("  a <name> <ip>  - Add custom IP alias")
-        print("  ua <name>      - Remove custom IP alias")
-        print()
-        print("Utility:")
-        print("  h, help        - Show this help")
-        print("  x, quit, exit  - Exit the CLI")
-        print()
-        print("Address Aliases:")
-        print("  • loc          - localhost (127.0.0.1)")
-        print("  • lan          - auto-discovered LAN IP")
-        print("  • Custom aliases can be added with 'a' command")
-        print("  • Use in broker addresses: loc:9001, lan:9002")
-        print()
-        print("Auto-Discovery:")
-        print("  • Client automatically scans unassigned seed brokers every 30s")
-        print("  • New clusters are discovered automatically when brokers are added")
-        print("  • Use 'l' command to see auto-discovery status")
-        print()
-        print("Navigation:")
-        print("  ↑ / ↓          - Browse command history")
-        print("  Ctrl+C         - Exit the CLI")
-        print("  Ctrl+D         - Exit the CLI (EOF)")
-        print("  Tab            - Command completion (if supported)")
+
     
-    def _cmd_show_ip(self):
-        """Show IP mappings: ip"""
-        print(self.ip_manager.show_mappings())
-    
-    def _cmd_refresh_ip(self):
-        """Refresh LAN IP: fi"""
-        result = self.ip_manager.refresh_lan_ip()
-        print(result)
-    
-    def _cmd_add_alias(self, args):
-        """Add IP alias: a <name> <ip>"""
-        if len(args) != 2:
-            print("Usage: a <name> <ip>")
-            return
-        
-        name, ip = args
-        result = self.ip_manager.add_alias(name, ip)
-        print(result)
-    
-    def _cmd_remove_alias(self, args):
-        """Remove IP alias: ua <name>"""
-        if not args:
-            print("Usage: ua <name>")
-            return
-        
-        name = args[0]
-        result = self.ip_manager.remove_alias(name)
-        print(result)
-    
-    def _cmd_exit(self):
-        """Exit the CLI"""
-        if self.client:
-            try:
-                # Properly disconnect the client to stop background threads
-                self.client.disconnect()
-            except Exception as e:
-                # Don't fail exit due to cleanup issues
-                print(f"Warning: Error during cleanup: {e}")
-        
-        # Save history before exiting
-        self._save_history()
-        print("Goodbye!")
+
 
 
 def parse_brokers(broker_string: str) -> List[str]:
@@ -582,7 +396,7 @@ def main():
         sys.exit(1)
     
     cli = DistributedQueueCLI(brokers, args.client_id)
-    cli.start()
+    cli.run()
 
 
 if __name__ == '__main__':
