@@ -70,7 +70,9 @@ class ClusterManager:
         self.running = False
         
         with self.state_lock:
-            self.status = BrokerStatus.STOPPED
+            # Remove self from cluster when stopping
+            if self.broker_id in self.cluster_members:
+                del self.cluster_members[self.broker_id]
     
     def _join_existing_cluster(self, seed_brokers: List[str]):
         """Join existing cluster using seed brokers."""
@@ -325,8 +327,9 @@ class ClusterManager:
                     if member.role == BrokerRole.LEADER:
                         leader_failed = True
                     
-                    # Mark as failed
-                    member.status = BrokerStatus.FAILED
+                    # Remove failed broker from cluster immediately
+                    print(f"[{self.broker_id}] Removing failed broker {broker_id} from cluster")
+                    del self.cluster_members[broker_id]
             
             # Update cluster version
             if failed_brokers:
@@ -335,7 +338,7 @@ class ClusterManager:
             # Handle leader failure
             if leader_failed and self.role == BrokerRole.REPLICA:
                 has_active_leader = any(
-                    member.role == BrokerRole.LEADER and member.status == BrokerStatus.ACTIVE
+                    member.role == BrokerRole.LEADER
                     for member in self.cluster_members.values()
                 )
                 
@@ -343,10 +346,7 @@ class ClusterManager:
                     print("Leader failed, triggering election")
                     self.on_leader_failure()
             elif self.role == BrokerRole.LEADER and failed_brokers:
-                # Leader can remove failed brokers from membership
-                for broker_id in failed_brokers:
-                    if broker_id in self.cluster_members:
-                        del self.cluster_members[broker_id]
+                # Broadcast cluster update after removing failed brokers
                 self._broadcast_cluster_membership_update()
     
     def _broadcast_cluster_membership_update(self):

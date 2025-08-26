@@ -96,7 +96,7 @@ class LeaderElection:
             member = self.cluster_manager.cluster_members[bid]
             if bid == self.broker_id:
                 potentially_active.append(bid)  # Self is always active
-            elif member.status != BrokerStatus.FAILED:
+            else:
                 # Quick connectivity check
                 if self._quick_connectivity_check(bid):
                     potentially_active.append(bid)
@@ -207,8 +207,7 @@ class LeaderElection:
                 return "failed"
         
         except Exception as e:
-            if member.status == BrokerStatus.ACTIVE:
-                print(f"[{self.broker_id}] Failed to get vote from broker {broker_id}: {e}")
+            print(f"[{self.broker_id}] Failed to get vote from broker {broker_id}: {e}")
             return "failed"
     
     def _become_leader(self, failed_brokers: List[str]):
@@ -256,7 +255,7 @@ class LeaderElection:
         for bid in all_broker_ids:
             if bid < candidate_id and bid != self.broker_id:
                 member = self.cluster_manager.cluster_members.get(bid)
-                if member and member.status != BrokerStatus.FAILED:
+                if member:
                     if current_time - member.last_heartbeat < 12.0:
                         return {"status": "denied", "reason": f"Waiting for higher priority candidate {bid}"}
         
@@ -304,12 +303,8 @@ class LeaderElection:
                 self.trigger_leader_election()
                 return
             
-            # Check if candidate is marked as failed
-            candidate_member = self.cluster_manager.cluster_members.get(candidate_id)
-            if candidate_member and candidate_member.status == BrokerStatus.FAILED:
-                print(f"[{self.broker_id}] Candidate {candidate_id} marked as failed, triggering backup election")
-                self.trigger_leader_election()
-                return
+            # Candidate check is handled by removal from cluster on failure
+            # so if candidate is in cluster_members, it's still viable
             
             # Check if we have a leader
             if self.cluster_manager.get_current_leader():

@@ -17,8 +17,6 @@ class BrokerStatus(Enum):
     """Broker status enumeration."""
     STARTING = "starting"
     ACTIVE = "active"
-    FAILED = "failed"
-    STOPPED = "stopped"
 
 
 @dataclass
