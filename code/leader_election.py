@@ -50,8 +50,7 @@ class LeaderElection:
                 broker_delay = 5.0
             
             def delayed_election():
-                time.sleep(broker_delay)
-                
+                                
                 # Recheck if we still need an election after delay
                 if self.cluster_manager.get_current_leader():
                     return
