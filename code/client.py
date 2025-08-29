@@ -239,15 +239,12 @@ class Client:
             if not topology:
                 continue
             
-            # Try to refresh from any available broker
-            for broker_addr in topology.seed_brokers:
+            # Try to refresh from any available broker in the cluster
+            for broker in topology.brokers.values():
                 try:
-                    host, port = broker_addr.split(':')
-                    port = int(port)
-                    
                     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
                     sock.settimeout(5.0)
-                    sock.connect((host, port))
+                    sock.connect((broker.host, broker.port))
                     
                     request = {
                         "operation": "CLUSTER_QUERY",
