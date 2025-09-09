@@ -4,14 +4,12 @@ Broker Spawner CLI - Interactive tool for spawning and managing broker clusters
 Based on cli/broker_spawner_documentation.md
 """
 
-import os
 import sys
 import socket
 import threading
 import time
 import argparse
-from typing import Dict, List, Optional, Tuple
-import json
+from typing import Dict, List, Optional
 
 # Add code directory to path
 sys.path.insert(0, 'code')

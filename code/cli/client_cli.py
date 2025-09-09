@@ -5,7 +5,6 @@ Interactive CLI for the Distributed Queuing Platform
 
 import argparse
 import sys
-import traceback
 from typing import Optional, List
 
 # Import from code directory
