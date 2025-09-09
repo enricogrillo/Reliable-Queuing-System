@@ -4,7 +4,7 @@ ReplicationManager - Handles data replication between leader and replicas.
 """
 
 import time
-from typing import Dict, List, Optional
+from typing import Dict
 
 from .types import BrokerRole, BrokerStatus
 

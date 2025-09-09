@@ -6,7 +6,7 @@ LeaderElection - Handles leader election process and voting.
 import time
 import random
 import threading
-from typing import Dict, List, Optional, Callable
+from typing import Dict, List
 
 from .types import BrokerRole, BrokerStatus
 

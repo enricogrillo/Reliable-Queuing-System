@@ -7,7 +7,7 @@ import json
 import socket
 import struct
 import threading
-from typing import Dict, List, Optional, Tuple, Callable
+from typing import Dict, Optional, Tuple, Callable
 
 
 class NetworkHandler:

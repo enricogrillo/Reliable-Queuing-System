@@ -6,8 +6,6 @@ ClusterManager - Handles cluster membership, joining, heartbeats, and failure de
 import time
 import threading
 from typing import Dict, List, Optional, Callable
-from dataclasses import dataclass
-from enum import Enum
 
 from .types import BrokerRole, BrokerStatus, ClusterMember
 

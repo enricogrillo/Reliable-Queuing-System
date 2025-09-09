@@ -6,7 +6,6 @@ Common CLI functionality shared between broker_spawner and client_cli
 import os
 import socket
 import sys
-from typing import Dict, Optional
 from abc import ABC, abstractmethod
 
 # Enable command history and line editing

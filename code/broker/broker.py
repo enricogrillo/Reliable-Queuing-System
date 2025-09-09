@@ -4,10 +4,7 @@ Broker2 Implementation - Refactored with Helper Classes
 Based on the original broker.py but organized with helper classes for better maintainability.
 """
 
-import json
-import time
-import threading
-from typing import Dict, List, Optional, Tuple, Any
+from typing import Dict, List, Optional
 
 from .data_manager import BrokerDataManager
 from ..id_generator import generate_queue_id
@@ -15,7 +12,7 @@ from .network_handler import NetworkHandler
 from .cluster_manager import ClusterManager
 from .leader_election import LeaderElection
 from .replication_manager import ReplicationManager
-from .types import BrokerRole, BrokerStatus, ClusterMember
+from .types import BrokerRole, BrokerStatus
 
 
 class Broker:
