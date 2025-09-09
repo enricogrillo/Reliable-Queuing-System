@@ -112,7 +112,7 @@ class LeaderElection:
         try:
             import socket
             sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            sock.settimeout(0.5)
+            sock.settimeout(2)
             sock.connect((member.host, member.port))
             sock.close()
             return True
