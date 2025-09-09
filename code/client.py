@@ -5,16 +5,14 @@ import json
 import sys
 import os
 from typing import Dict, List, Optional, Any
-from enum import Enum
 
 # Add current directory to path for imports
 sys.path.insert(0, os.path.dirname(__file__))
 from id_generator import generate_client_id, extract_cluster_from_queue_id
 
+# Import BrokerRole from local broker.types module
+from broker.broker_types import BrokerRole
 
-class BrokerRole(Enum):
-    LEADER = "leader"
-    REPLICA = "replica"
 
 
 class BrokerInfo:

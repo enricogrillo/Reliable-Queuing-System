@@ -4,15 +4,22 @@ Broker2 Implementation - Refactored with Helper Classes
 Based on the original broker.py but organized with helper classes for better maintainability.
 """
 
+import sys
+import os
 from typing import Dict, List, Optional
 
-from .data_manager import BrokerDataManager
-from ..id_generator import generate_queue_id
-from .network_handler import NetworkHandler
-from .cluster_manager import ClusterManager
-from .leader_election import LeaderElection
-from .replication_manager import ReplicationManager
-from .types import BrokerRole, BrokerStatus
+# Add parent directory to path for id_generator import
+sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
+from id_generator import generate_queue_id
+
+# Add broker directory to path for local imports
+sys.path.insert(0, os.path.dirname(__file__))
+from data_manager import BrokerDataManager
+from network_handler import NetworkHandler
+from cluster_manager import ClusterManager
+from leader_election import LeaderElection
+from replication_manager import ReplicationManager
+from broker_types import BrokerRole, BrokerStatus
 
 
 class Broker:
@@ -215,17 +222,6 @@ class Broker:
         """Get network connection statistics."""
         return self.network_handler.get_connection_count()
     
-    def is_leader(self) -> bool:
-        """Check if this broker is the leader."""
-        return self.cluster_manager.role == BrokerRole.LEADER
-    
-    def is_replica(self) -> bool:
-        """Check if this broker is a replica."""
-        return self.cluster_manager.role == BrokerRole.REPLICA
-    
-    def is_active(self) -> bool:
-        """Check if this broker is active."""
-        return self.cluster_manager.status == BrokerStatus.ACTIVE
     
     def get_cluster_size(self) -> int:
         """Get the total number of brokers in the cluster."""
@@ -235,25 +231,3 @@ class Broker:
         """Get the number of active replica brokers."""
         return len(self.cluster_manager.get_active_replicas())
     
-    def force_leader_election(self):
-        """Force a leader election (for testing/debugging)."""
-        if self.cluster_manager.role == BrokerRole.REPLICA:
-            self.leader_election.trigger_leader_election()
-        else:
-            print(f"[{self.broker_id}] Cannot trigger election - not a replica")
-    
-    def get_health_status(self) -> Dict:
-        """Get comprehensive health status of the broker."""
-        return {
-            "broker_id": self.broker_id,
-            "cluster_id": self.cluster_id,
-            "role": self.cluster_manager.role.value,
-            "status": self.cluster_manager.status.value,
-            "running": self.running,
-            "cluster_size": self.get_cluster_size(),
-            "active_replicas": self.get_active_replicas_count(),
-            "current_leader": self.get_current_leader(),
-            "cluster_version": self.cluster_manager.cluster_version,
-            "connection_stats": self.get_connection_stats(),
-            "election_in_progress": self.leader_election.is_election_in_progress()
-        }

@@ -5,9 +5,13 @@ ClusterManager - Handles cluster membership, joining, heartbeats, and failure de
 
 import time
 import threading
+import sys
+import os
 from typing import Dict, List, Optional, Callable
 
-from .types import BrokerRole, BrokerStatus, ClusterMember
+# Add broker directory to path for local imports
+sys.path.insert(0, os.path.dirname(__file__))
+from broker_types import BrokerRole, BrokerStatus, ClusterMember
 
 
 class ClusterManager:

@@ -186,15 +186,6 @@ class BrokerDataManager:
         )
         return cursor.fetchone()[0]
     
-    def cleanup_old_data(self, queue_id: str, before_sequence: int):
-        """Remove obsolete data (optional optimization)."""
-        with self.transaction_lock:
-            cursor = self.db_connection.cursor()
-            cursor.execute(
-                "DELETE FROM queue_data WHERE queue_id = ? AND sequence_num < ?",
-                (queue_id, before_sequence)
-            )
-            self.db_connection.commit()
     
     # Transaction Management
     def begin_transaction(self):
@@ -281,30 +272,6 @@ class BrokerDataManager:
             self.rollback_transaction()
             return False
     
-    def get_queue_messages_since(self, queue_id: str, since_sequence: int) -> List[Tuple[int, int]]:
-        """Get messages from queue starting from a specific sequence number."""
-        cursor = self.db_connection.cursor()
-        cursor.execute(
-            "SELECT sequence_num, data FROM queue_data WHERE queue_id = ? AND sequence_num > ? ORDER BY sequence_num",
-            (queue_id, since_sequence)
-        )
-        return cursor.fetchall()
-    
-    def bulk_insert_messages(self, messages: List[Dict[str, Any]]) -> bool:
-        """Insert multiple messages for catch-up scenarios."""
-        try:
-            with self.transaction_lock:
-                cursor = self.db_connection.cursor()
-                for msg in messages:
-                    cursor.execute(
-                        "INSERT OR REPLACE INTO queue_data (queue_id, sequence_num, data) VALUES (?, ?, ?)",
-                        (msg['queue_id'], msg['sequence_num'], msg['data'])
-                    )
-                self.db_connection.commit()
-                return True
-        except Exception as e:
-            print(f"Failed to bulk insert messages: {e}")
-            return False
     
 
     def close(self):

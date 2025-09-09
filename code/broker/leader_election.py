@@ -6,9 +6,13 @@ LeaderElection - Handles leader election process and voting.
 import time
 import random
 import threading
+import sys
+import os
 from typing import Dict, List
 
-from .types import BrokerRole, BrokerStatus
+# Add broker directory to path for local imports
+sys.path.insert(0, os.path.dirname(__file__))
+from broker_types import BrokerRole, BrokerStatus
 
 
 class LeaderElection:

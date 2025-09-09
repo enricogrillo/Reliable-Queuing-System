@@ -6,7 +6,11 @@ ReplicationManager - Handles data replication between leader and replicas.
 import time
 from typing import Dict
 
-from .types import BrokerRole, BrokerStatus
+# Add broker directory to path for local imports
+import sys
+import os
+sys.path.insert(0, os.path.dirname(__file__))
+from broker_types import BrokerRole, BrokerStatus
 
 
 class ReplicationManager:
