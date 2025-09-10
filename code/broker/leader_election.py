@@ -176,12 +176,12 @@ class LeaderElection:
         if votes_received >= required_votes:
             # Clean up failed brokers before becoming leader
             if failed_contacts:
-                self.cluster_manager._handle_broker_failures(failed_contacts)
+                self.cluster_manager._handle_broker_failures(failed_contacts, "election communication failure")
             self._become_leader([])
         else:
             print("Election failed, insufficient votes")
             if failed_contacts:
-                self.cluster_manager._handle_broker_failures(failed_contacts)
+                self.cluster_manager._handle_broker_failures(failed_contacts, "election communication failure")
             self._schedule_retry_election()
         
         # Re-enable failure detection

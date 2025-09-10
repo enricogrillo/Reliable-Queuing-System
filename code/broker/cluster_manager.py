@@ -352,11 +352,11 @@ class ClusterManager:
                     failed_brokers.append(broker_id)
         
         if failed_brokers:
-            self._handle_broker_failures(failed_brokers)
+            self._handle_broker_failures(failed_brokers, "heartbeat timeout")
     
-    def _handle_broker_failures(self, failed_brokers: List[str]):
+    def _handle_broker_failures(self, failed_brokers: List[str], reason: str = "unknown"):
         """Handle detected broker failures."""
-        print(f"[{self.broker_id}] Detected broker failures: {failed_brokers}")
+        print(f"[{self.broker_id}] Detected broker failures: {failed_brokers} (reason: {reason})")
         
         with self.state_lock:
             leader_failed = False
