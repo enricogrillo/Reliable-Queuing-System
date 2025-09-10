@@ -383,7 +383,7 @@ Persistence: {persistence_status}"""
         for i in range(broker_count):
             broker_id = generate_broker_id()
             port = self._allocate_port()  # Use individual port allocation instead of consecutive
-            host = self.ip_manager.resolve_ip('loc')  # Default to localhost
+            host = self.ip_manager.resolve_ip('lan')  # Default to localhost
             
             broker_instance = self._create_broker_instance(broker_id, cluster_id, host, port, seed_brokers)
             if broker_instance:

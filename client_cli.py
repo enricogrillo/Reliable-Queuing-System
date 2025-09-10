@@ -380,7 +380,7 @@ def parse_brokers(broker_string: str) -> List[str]:
 def main():
     parser = argparse.ArgumentParser(description='Distributed Queue CLI')
     parser.add_argument('-b', '--brokers', 
-                       default='loc:9001,loc:9002,loc:9003',
+                       default='lan:9001,lan:9002,lan:9003',
                        help='Comma-separated list of broker addresses (host:port, supports loc/lan aliases)')
     parser.add_argument('-n', '--client-id', 
                        help='Client ID (auto-generated if not provided)')
