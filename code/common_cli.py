@@ -6,6 +6,7 @@ Common CLI functionality shared between broker_spawner and client_cli
 import os
 import socket
 import sys
+import json
 from abc import ABC, abstractmethod
 
 # Enable command history and line editing
@@ -22,12 +23,18 @@ except ImportError:
 class IPManager:
     """Manages IP address aliases and discovery."""
     
-    def __init__(self):
+    def __init__(self, config_file: str = None):
         self.aliases = {
             'loc': '127.0.0.1',
             'lan': self._discover_lan_ip()
         }
-        self.custom_aliases = {}
+        if config_file is None:
+            data_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'data')
+            os.makedirs(data_dir, exist_ok=True)
+            self.config_file = os.path.join(data_dir, 'ip_aliases.json')
+        else:
+            self.config_file = config_file
+        self.custom_aliases = self._load_custom_aliases()
     
     def _discover_lan_ip(self) -> str:
         """Auto-discover LAN IP address."""
@@ -39,6 +46,36 @@ class IPManager:
             return ip
         except:
             return "127.0.0.1"
+    
+    def _load_custom_aliases(self) -> dict:
+        """Load custom aliases from persistent storage."""
+        aliases = {}
+        try:
+            if os.path.exists(self.config_file):
+                with open(self.config_file, 'r') as f:
+                    for line in f:
+                        line = line.strip()
+                        if line and not line.startswith('#'):
+                            try:
+                                name, ip = line.split('=', 1)
+                                name, ip = name.strip(), ip.strip()
+                                if ip == "REMOVED":
+                                    aliases.pop(name, None)
+                                else:
+                                    aliases[name] = ip
+                            except:
+                                pass
+        except Exception:
+            pass
+        return aliases
+    
+    def _save_alias(self, name: str, ip: str):
+        """Append alias to persistent storage."""
+        try:
+            with open(self.config_file, 'a') as f:
+                f.write(f"{name}={ip}\n")
+        except Exception:
+            pass
     
     def refresh_lan_ip(self) -> str:
         """Refresh and update LAN IP discovery."""
@@ -52,6 +89,7 @@ class IPManager:
         if name in ['loc', 'lan']:
             return f"Cannot override built-in alias '{name}'"
         self.custom_aliases[name] = ip
+        self._save_alias(name, ip)
         return f"Added alias '{name}' -> {ip}"
     
     def remove_alias(self, name: str) -> str:
@@ -59,12 +97,15 @@ class IPManager:
         if name in ['loc', 'lan']:
             return f"Cannot remove built-in alias '{name}'"
         if name in self.custom_aliases:
-            ip = self.custom_aliases.pop(name)
+            self.custom_aliases.pop(name)
+            self._save_alias(name, "REMOVED")
             return f"Removed alias '{name}'"
         return f"Alias '{name}' not found"
     
     def resolve_ip(self, addr: str) -> str:
         """Resolve alias to IP address."""
+        # Refresh custom aliases from file
+        self.custom_aliases = self._load_custom_aliases()
         if addr in self.aliases:
             return self.aliases[addr]
         if addr in self.custom_aliases:
@@ -73,6 +114,8 @@ class IPManager:
     
     def show_mappings(self) -> str:
         """Show all IP mappings."""
+        # Refresh custom aliases from file
+        self.custom_aliases = self._load_custom_aliases()
         lines = ["IP mappings:"]
         lines.append(f"- loc: {self.aliases['loc']} (localhost)")
         lines.append(f"- lan: {self.aliases['lan']} (auto-discovered)")

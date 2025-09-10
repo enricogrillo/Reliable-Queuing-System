@@ -456,7 +456,7 @@ Persistence: {persistence_status}"""
                 return
         
         cluster_id = generate_cluster_id()
-        host = self.ip_manager.resolve_ip('loc')
+        host = self.ip_manager.resolve_ip('lan')
         
         spawned = []
         spawned_ports = []
@@ -751,26 +751,52 @@ Persistence: {persistence_status}"""
         
         print(f"Cluster {cluster_id}:")
         
-        # Query actual broker roles if possible
-        for i, broker_id in enumerate(broker_ids):
-            broker_instance = self.brokers[broker_id]
-            
-            # Try to get actual role from broker
+        # Query one of our brokers to get the complete cluster topology
+        cluster_info = None
+        for broker_id in broker_ids:
             try:
-                role = broker_instance.broker.role.value.title() if hasattr(broker_instance.broker, 'role') else ("Leader" if i == 0 else "Replica")
-            except:
-                role = "Leader" if i == 0 else "Replica"
+                broker_instance = self.brokers[broker_id]
+                if broker_instance.is_alive():
+                    cluster_info = broker_instance.broker.get_cluster_info()
+                    break
+            except Exception as e:
+                print(f"  Warning: Failed to query broker {broker_id}: {e}")
+                continue
+        
+        if not cluster_info or not cluster_info.get('brokers'):
+            print("  Could not retrieve cluster information from brokers")
+            return
+        
+        # Display all brokers in the cluster (including remote ones)
+        all_brokers = cluster_info['brokers']
+        for i, broker_info in enumerate(all_brokers):
+            broker_id = broker_info['broker_id']
+            host = broker_info['host']
+            port = broker_info['port']
+            role = broker_info['role'].title()
+            status = broker_info.get('status', 'active')
             
-            # Try to get who this broker thinks is the leader
-            try:
-                current_leader = broker_instance.broker.get_current_leader() if hasattr(broker_instance.broker, 'get_current_leader') else None
-                leader_view = f" | thinks leader: {current_leader}" if current_leader else " | thinks leader: None"
-            except:
-                leader_view = " | thinks leader: Unknown"
+            # Check if this is a locally managed broker
+            is_local = broker_id in self.brokers
+            local_status = ""
+            if is_local:
+                local_instance = self.brokers[broker_id]
+                local_status = " ✓" if local_instance.is_alive() else " ✗"
+            else:
+                local_status = " (remote)"
             
-            status = "✓" if broker_instance.is_alive() else "✗"
-            prefix = "├─" if i < len(broker_ids) - 1 else "└─"
-            print(f"{prefix} {role}: {broker_id} ({broker_instance.host}:{broker_instance.port}) {status}{leader_view}")
+            # Try to get who this broker thinks is the leader (only for local brokers)
+            leader_view = ""
+            if is_local:
+                try:
+                    broker_instance = self.brokers[broker_id]
+                    current_leader = broker_instance.broker.get_current_leader() if hasattr(broker_instance.broker, 'get_current_leader') else None
+                    leader_view = f" | thinks leader: {current_leader}" if current_leader else " | thinks leader: None"
+                except:
+                    leader_view = " | thinks leader: Unknown"
+            
+            prefix = "├─" if i < len(all_brokers) - 1 else "└─"
+            print(f"{prefix} {role}: {broker_id} ({host}:{port}){local_status}{leader_view}")
     
     def _cmd_show_queues(self, args):
         """Show broker queues: q <broker_id>"""
@@ -870,6 +896,7 @@ def main():
     """Main entry point."""
     parser = argparse.ArgumentParser(description="Broker Spawner CLI - Interactive tool for spawning and managing broker clusters")
     parser.add_argument('-t', '--temporary', action='store_true', 
+                       default='-t',
                        help='Disable persistence for this session (temporary mode)')
     
     args = parser.parse_args()
