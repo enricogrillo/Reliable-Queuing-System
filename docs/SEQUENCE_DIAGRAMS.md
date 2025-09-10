@@ -161,9 +161,9 @@ sequenceDiagram
     Note over NewBroker: New broker receives:<br/>- Complete cluster member list<br/>- All queue data and messages<br/>- Client read positions
     
     par Membership Update to All Brokers
-        Leader->>Replica1: 5a. MEMBERSHIP_UPDATE<br/>{"operation": "MEMBERSHIP_UPDATE", "cluster_version": 44, "members": {...}}
-        Leader->>Replica2: 5b. MEMBERSHIP_UPDATE<br/>{"operation": "MEMBERSHIP_UPDATE", "cluster_version": 44, "members": {...}}
-        Leader->>NewBroker: 5c. MEMBERSHIP_UPDATE<br/>{"operation": "MEMBERSHIP_UPDATE", "cluster_version": 44, "members": {...}}
+        Leader->>Replica1: 5a. CLUSTER_UPDATE<br/>{"operation": "CLUSTER_UPDATE", "cluster_version": 44, "members": {...}}
+        Leader->>Replica2: 5b. CLUSTER_UPDATE<br/>{"operation": "CLUSTER_UPDATE", "cluster_version": 44, "members": {...}}
+        Leader->>NewBroker: 5c. CLUSTER_UPDATE<br/>{"operation": "CLUSTER_UPDATE", "cluster_version": 44, "members": {...}}
     end
     
     par ACK from All Brokers
@@ -178,7 +178,7 @@ sequenceDiagram
 **Key Messages:**
 - `JOIN_CLUSTER`: New broker requests cluster membership
 - Complete data snapshot transfer
-- `MEMBERSHIP_UPDATE`: Cluster-wide membership synchronization
+- `CLUSTER_UPDATE`: Cluster-wide membership synchronization
 - Dynamic cluster membership management
 
 ---
@@ -266,7 +266,7 @@ sequenceDiagram
         end
     end
     
-    Note over FailedBroker: ❌ Broker fails or<br/>network partition occurs
+    Note over FailedBroker: ❌ Broker fails
     
     loop Next Heartbeat Cycle
         par Expected Heartbeats
@@ -282,8 +282,8 @@ sequenceDiagram
     Note over Leader: Timeout detected for B-003<br/>(15 second election timeout)
     
     par Membership Update - Mark Failed Broker Inactive
-        Leader->>Replica1: 5a. MEMBERSHIP_UPDATE<br/>{"operation": "MEMBERSHIP_UPDATE", "cluster_version": 43, "members": {"B-003": {"status": "inactive"}}}
-        Leader->>Replica2: 5b. MEMBERSHIP_UPDATE<br/>{"operation": "MEMBERSHIP_UPDATE", "cluster_version": 43, "members": {"B-003": {"status": "inactive"}}}
+        Leader->>Replica1: 5a. CLUSTER_UPDATE<br/>{"operation": "CLUSTER_UPDATE", "cluster_version": 43, "members": {"B-003": {"status": "inactive"}}}
+        Leader->>Replica2: 5b. CLUSTER_UPDATE<br/>{"operation": "CLUSTER_UPDATE", "cluster_version": 43, "members": {"B-003": {"status": "inactive"}}}
     end
     
     par ACK Membership Update
@@ -297,7 +297,7 @@ sequenceDiagram
 **Key Messages:**
 - `HEARTBEAT`: Periodic health check messages
 - Timeout-based failure detection
-- `MEMBERSHIP_UPDATE`: Failed broker exclusion
+- `CLUSTER_UPDATE`: Failed broker exclusion
 - Automatic cluster healing
 
 ---
@@ -396,7 +396,7 @@ sequenceDiagram
 | `REPLICATE` | Data replication | Leader → Replicas |
 | `ELECTION_REQUEST` | Request votes for leadership | Candidate → Replicas |
 | `PROMOTE_TO_LEADER` | Announce new leader | New Leader → All |
-| `MEMBERSHIP_UPDATE` | Update cluster membership | Leader → All |
+| `CLUSTER_UPDATE` | Update cluster membership | Leader → All |
 | `DATA_SYNC_REQUEST` | Request data synchronization | Broker → Leader |
 
 ### System Characteristics
