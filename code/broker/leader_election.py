@@ -34,7 +34,7 @@ class LeaderElection:
         # Threading
         self.election_lock = threading.Lock()
         
-        print(f"[{self.broker_id}] LeaderElection initialized")
+        # print(f"[{self.broker_id}] LeaderElection initialized")
     
     def trigger_leader_election(self):
         """Trigger leader election process."""

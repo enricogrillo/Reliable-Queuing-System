@@ -31,7 +31,7 @@ class NetworkHandler:
         self.client_connections: Dict[str, socket.socket] = {}
         self.broker_connections: Dict[str, socket.socket] = {}
         
-        print(f"[{self.broker_id}] NetworkHandler initialized on {listen_host}:{listen_port}")
+        # print(f"[{self.broker_id}] NetworkHandler initialized on {listen_host}:{listen_port}")
     
     def start(self):
         """Start the network server."""
@@ -47,7 +47,7 @@ class NetworkHandler:
         if not self.running:
             return
             
-        print(f"[{self.broker_id}] Stopping network server...")
+        # print(f"[{self.broker_id}] Stopping network server...")
         self.running = False
         
         # Close server socket

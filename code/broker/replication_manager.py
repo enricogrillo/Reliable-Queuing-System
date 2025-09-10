@@ -25,7 +25,7 @@ class ReplicationManager:
         self.cluster_manager = cluster_manager
         self.data_manager = data_manager
         
-        print(f"[{self.broker_id}] ReplicationManager initialized")
+        # print(f"[{self.broker_id}] ReplicationManager initialized")
     
     def replicate_to_replicas(self, operation_data: Dict) -> bool:
         """Replicate operation to replica brokers, require majority consensus."""

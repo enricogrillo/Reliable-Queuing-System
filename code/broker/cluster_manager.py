@@ -44,7 +44,7 @@ class ClusterManager:
         self.state_lock = threading.RLock()
         self.running = False
         
-        print(f"[{self.broker_id}] ClusterManager initialized")
+        # print(f"[{self.broker_id}] ClusterManager initialized")
     
     def start(self, seed_brokers: List[str] = None):
         """Start cluster manager operations."""
@@ -68,7 +68,7 @@ class ClusterManager:
         if not self.running:
             return
             
-        print(f"[{self.broker_id}] Stopping cluster manager...")
+        # print(f"[{self.broker_id}] Stopping cluster manager...")
         self.running = False
         
         with self.state_lock:
