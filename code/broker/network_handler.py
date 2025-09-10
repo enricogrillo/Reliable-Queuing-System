@@ -190,7 +190,7 @@ class NetworkHandler:
             print(f"[{self.broker_id}] Failed to send message: {e}")
             return False
     
-    def send_to_broker(self, host: str, port: int, message: Dict, timeout: float = 5.0) -> Optional[Dict]:
+    def send_to_broker(self, host: str, port: int, message: Dict, timeout: float = 3.0) -> Optional[Dict]:
         """Send message to specific broker and return response."""
         try:
             # Create connection to broker

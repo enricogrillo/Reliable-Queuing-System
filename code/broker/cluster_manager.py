@@ -303,8 +303,20 @@ class ClusterManager:
                 if bid != self.broker_id
             ]
         
+        def send_single_heartbeat(host, port):
+            try:
+                self.network_handler.send_to_broker(host, port, heartbeat_message)
+            except:
+                pass
+        
+        threads = []
         for host, port in other_members:
-            self.network_handler.send_to_broker(host, port, heartbeat_message)
+            thread = threading.Thread(target=send_single_heartbeat, args=(host, port))
+            thread.start()
+            threads.append(thread)
+        
+        for thread in threads:
+            thread.join(timeout=1.0)
         
         self.last_heartbeat_sent = time.time()
     

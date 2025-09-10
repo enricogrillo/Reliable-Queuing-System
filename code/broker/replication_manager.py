@@ -44,7 +44,7 @@ class ReplicationManager:
         
         return successful_acks >= required_acks
     
-    def _send_to_replica(self, replica_id: str, message: Dict, timeout: float = 5.0) -> bool:
+    def _send_to_replica(self, replica_id: str, message: Dict, timeout: float = 3.0) -> bool:
         """Send message to specific replica and wait for response."""
         if replica_id not in self.cluster_manager.cluster_members:
             return False
