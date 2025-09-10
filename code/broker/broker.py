@@ -131,24 +131,28 @@ class Broker:
                 return self._handle_append_message(message)
             elif operation == "READ":
                 return self._handle_read_message(message)
+
+            # Common
             elif operation == "CLUSTER_QUERY":
                 return self._handle_cluster_query()
             
             # Broker-to-broker operations
             elif operation == "JOIN_CLUSTER":
                 return self.cluster_manager.handle_broker_join(message)
+            elif operation == "CLUSTER_UPDATE":
+                return self.cluster_manager.handle_cluster_update(message)
             elif operation == "HEARTBEAT":
                 return self.cluster_manager.handle_heartbeat(message)
             elif operation == "REPLICATE":
                 return self.replication_manager.handle_replication(message)
-            elif operation == "DATA_SYNC_REQUEST":
-                return self.replication_manager.handle_data_sync_request(message)
             elif operation == "ELECTION_REQUEST":
                 return self.leader_election.handle_election_request(message)
             elif operation == "PROMOTE_TO_LEADER":
                 return self.leader_election.handle_leader_promotion(message)
-            elif operation == "CLUSTER_UPDATE":
-                return self.cluster_manager.handle_cluster_update(message)
+            
+            
+            elif operation == "DATA_SYNC_REQUEST":
+                return self.replication_manager.handle_data_sync_request(message)
             
             else:
                 return {"status": "error", "message": f"Unknown operation: {operation}"}

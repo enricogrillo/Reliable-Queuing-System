@@ -348,7 +348,7 @@ class ClusterManager:
             for broker_id, member in self.cluster_members.items():
                 if (broker_id != self.broker_id and 
                     member.status == BrokerStatus.ACTIVE and
-                    current_time - member.last_heartbeat > 8.0):
+                    current_time - member.last_heartbeat > 15.0):
                     failed_brokers.append(broker_id)
         
         if failed_brokers:
