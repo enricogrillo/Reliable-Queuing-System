@@ -116,7 +116,7 @@ class LeaderElection:
         try:
             import socket
             sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            sock.settimeout(2)
+            sock.settimeout(10)
             sock.connect((member.host, member.port))
             sock.close()
             return True
@@ -196,7 +196,7 @@ class LeaderElection:
         
         try:
             response = self.network_handler.send_to_broker(
-                member.host, member.port, election_message, timeout=3.0
+                member.host, member.port, election_message, timeout=15.0
             )
             
             if response:
