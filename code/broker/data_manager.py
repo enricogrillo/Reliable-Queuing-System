@@ -88,6 +88,23 @@ class BrokerDataManager:
         cursor.execute("SELECT queue_id FROM queues")
         return [row[0] for row in cursor.fetchall()]
     
+    def rollback_queue_creation(self, queue_id: str) -> bool:
+        """Rollback queue creation by removing queue and all its data."""
+        with self.transaction_lock:
+            try:
+                cursor = self.db_connection.cursor()
+                # Remove all messages from the queue
+                cursor.execute("DELETE FROM queue_data WHERE queue_id = ?", (queue_id,))
+                # Remove all client positions for the queue  
+                cursor.execute("DELETE FROM client_positions WHERE queue_id = ?", (queue_id,))
+                # Remove the queue itself
+                cursor.execute("DELETE FROM queues WHERE queue_id = ?", (queue_id,))
+                self.db_connection.commit()
+                return True
+            except Exception as e:
+                print(f"Failed to rollback queue creation for {queue_id}: {e}")
+                return False
+    
     # Message Operations
     def append_message(self, queue_id: str, data: int) -> int:
         """Add message with next sequence number. Returns sequence number."""

@@ -179,6 +179,12 @@ class Broker:
         if not queue_name or data is None:
             return {"status": "error", "message": "Missing queue_name or data"}
         
+        # Validate that data is an integer (handle various numeric types)
+        try:
+            data = int(data)
+        except (ValueError, TypeError):
+            return {"status": "error", "message": "Message data must be an integer"}
+        
         # Use replication manager to append and replicate
         return self.replication_manager.append_message_with_replication(queue_name, data)
     
